@@ -1,0 +1,10 @@
+[workspace]
+
+[package]
+name = "flex-nav"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+renderer = { path = "../../crates/renderer" }
+dom = { path = "../../crates/dom" }

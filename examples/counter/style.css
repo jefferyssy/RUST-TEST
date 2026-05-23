@@ -1,0 +1,36 @@
+/* Counter App — 样式表 */
+/* 编译为本引擎的 StyleSheet → CSS 级联 */
+
+body {
+  font-family: sans-serif;
+  margin: 0;
+  padding: 20px;
+}
+
+.container {
+  background: #f5f5f5;
+  padding: 20px;
+  text-align: center;
+}
+
+h1 {
+  background: #e8e8e8;
+  margin: 0 0 16px 0;
+  font-size: 24px;
+}
+
+.display {
+  background: #ffffff;
+  border: 1px solid #cccccc;
+  font-size: 48px;
+  padding: 8px;
+}
+
+button {
+  background: #007bff;
+  color: white;
+  padding: 8px 16px;
+  font-size: 18px;
+  margin-top: 16px;
+  border: none;
+}

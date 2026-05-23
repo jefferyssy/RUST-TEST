@@ -1,0 +1,9 @@
+[package]
+name = "render_tree"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+dom = { workspace = true }
+style = { workspace = true }
+layout = { workspace = true }

@@ -1,0 +1,11 @@
+[package]
+name = "toolchain"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+
+[[bin]]
+name = "toolchain"
+path = "src/main.rs"

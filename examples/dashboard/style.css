@@ -1,0 +1,80 @@
+body {
+  font-family: sans-serif;
+  margin: 0;
+  padding: 24px;
+  background: #1a1a2e;
+  color: #eee;
+}
+
+h1 {
+  font-size: 28px;
+  margin: 0 0 24px 0;
+  color: #e94560;
+}
+
+.cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.card {
+  background: #16213e;
+  border: 1px solid #0f3460;
+  padding: 24px;
+  text-align: center;
+  min-width: 160px;
+  flex: 1;
+}
+
+#card-revenue {
+  border-color: #e94560;
+}
+
+#card-users {
+  border-color: #0fbcf9;
+}
+
+#card-orders {
+  border-color: #2ed573;
+}
+
+h3 {
+  margin: 0 0 12px 0;
+  font-size: 18px;
+  color: #a0a0b0;
+}
+
+.stat-val {
+  font-size: 48px;
+  padding: 12px;
+  margin: 12px 0;
+}
+
+#stat-val1 {
+  color: #e94560;
+}
+
+#stat-val2 {
+  color: #0fbcf9;
+}
+
+#stat-val3 {
+  color: #2ed573;
+}
+
+button {
+  padding: 8px 20px;
+  font-size: 16px;
+  border: none;
+  background: #e94560;
+  color: white;
+}
+
+#card-users button {
+  background: #0fbcf9;
+}
+
+#card-orders button {
+  background: #2ed573;
+}

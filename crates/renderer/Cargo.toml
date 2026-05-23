@@ -1,0 +1,17 @@
+[package]
+name = "renderer"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+dom = { workspace = true }
+style = { workspace = true }
+layout = { workspace = true }
+render_tree = { workspace = true }
+wgpu = { workspace = true }
+winit = { workspace = true }
+rustybuzz = { workspace = true }
+fontdb = { workspace = true }
+ab_glyph = "0.2"
+pollster = "0.4"
+bytemuck = { version = "1.21", features = ["derive"] }

@@ -1,0 +1,36 @@
+[workspace]
+resolver = "2"
+exclude = ["target"]
+members = [
+    "crates/dom",
+    "crates/style",
+    "crates/layout",
+    "crates/render_tree",
+    "crates/renderer",
+    "crates/toolchain",
+    "crates/net",
+    "crates/storage",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+dom = { path = "crates/dom" }
+style = { path = "crates/style" }
+layout = { path = "crates/layout" }
+render_tree = { path = "crates/render_tree" }
+renderer = { path = "crates/renderer" }
+
+wgpu = "23"
+winit = "0.30"
+taffy = "0.5"
+cssparser = "0.34"
+selectors = "0.26"
+rustybuzz = "0.18"
+fontdb = "0.22"
+unicode-linebreak = "0.1"
+image = "0.25"
+encoding_rs = "0.8"

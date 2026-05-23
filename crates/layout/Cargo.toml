@@ -1,0 +1,12 @@
+[package]
+name = "layout"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+dom = { workspace = true }
+style = { workspace = true }
+taffy = { workspace = true }
+rustybuzz = { workspace = true }
+fontdb = { workspace = true }
+unicode-linebreak = { workspace = true }

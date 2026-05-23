@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -la \"e:/demoSpace/\" 2>/dev/null)",
+      "Read(//e/demoSpace/**)"
+    ]
+  }
+}

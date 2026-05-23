@@ -1,0 +1,1 @@
+- [语言偏好](user_language_pref.md) — 所有回复统一使用中文

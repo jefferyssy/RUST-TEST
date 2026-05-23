@@ -1,0 +1,9 @@
+[package]
+name = "style"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+dom = { workspace = true }
+cssparser = { workspace = true }
+selectors = { workspace = true }
