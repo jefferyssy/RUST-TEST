@@ -19,7 +19,7 @@ pub use layout_box::{LayoutBox, BoxType, EdgeSizes, Overflow, BorderRadius, Visi
 pub use flex::FlexLayout;
 pub use block::BlockLayout;
 pub use positioned::PositionedLayout;
-pub use text::TextMeasurer;
+pub use text::{TextMeasurer, char_width_factor};
 pub use inline::InlineLayout;
 pub use table::TableLayout;
 pub use grid::GridLayout;
@@ -41,13 +41,18 @@ use dom::{Node, NodeType, Size};
 pub struct LayoutEngine {
     /// taffy 布局实例（用于 Flexbox）
     taffy: Option<taffy::TaffyTree>,
+    /// 文本测量器（rustybuzz + fontdb 精确测量）
+    pub text_measurer: TextMeasurer,
     // Phase 1+: 布局缓存
 }
 
 impl LayoutEngine {
     /// 创建新布局引擎
     pub fn new() -> Self {
-        Self { taffy: Some(taffy::TaffyTree::new()) }
+        Self {
+            taffy: Some(taffy::TaffyTree::new()),
+            text_measurer: TextMeasurer::new(),
+        }
     }
 
     /// 主入口：执行完整布局计算
@@ -62,7 +67,7 @@ impl LayoutEngine {
         root.rect.width = viewport.width;
 
         // 递归计算所有节点尺寸（内部容器会收缩包裹内容高度）
-        self.calculate_sizes(root, viewport);
+        self.calculate_sizes(root, viewport, None);
 
         // 根节点高度：若内容不足视口则撑满，若内容溢出则跟随内容
         // 这样 body 背景能覆盖整个窗口，类似 Chrome 行为
@@ -76,13 +81,21 @@ impl LayoutEngine {
     }
 
     /// 递归计算尺寸
-    fn calculate_sizes(&mut self, node: &mut LayoutBox, viewport: Size<f32>) {
+    fn calculate_sizes(&mut self, node: &mut LayoutBox, viewport: Size<f32>, parent_box_type: Option<BoxType>) {
         // 根据布局类型分发
         let box_type = node.box_type.clone();
         match box_type {
             BoxType::FlexContainer => {
+                // Phase 0: 自底向上先计算子级尺寸（嵌套 flex 容器需先确定内容尺寸）
+                // 这样 taffy 才能用正确的子级尺寸进行 space-between / align-items 计算
+                self.calculate_sizes_children(node, viewport);
                 let mut flex = FlexLayout;
-                flex.layout(&mut self.taffy, node, viewport);
+                // 仅当父级为 Block 时容器宽度可信赖（由 BlockLayout 设定）
+                // 父级为 Flex/Grid 时，构建阶段宽度估计使用 Block 规则（max），不适用于 Flex
+                let constrain_width = parent_box_type.as_ref().map_or(true, |pt| {
+                    matches!(pt, BoxType::Block | BoxType::Anonymous)
+                });
+                flex.layout(&mut self.taffy, node, viewport, constrain_width);
             }
             BoxType::Block | BoxType::Anonymous => {
                 let block = BlockLayout;
@@ -149,6 +162,19 @@ impl LayoutEngine {
 
         // 子节点布局完成后，收缩包裹当前节点的高度
         self.shrink_to_content(node);
+
+        // 子节点布局完成后，Block 容器内兄弟节点的高度可能已改变，
+        // 必须重跑 BlockLayout 以确保所有兄弟节点位置正确。
+        // 典型场景：空 #todo-list 初始高度 0，子 li 布局后高度增长，
+        // 其后的 footer 需要向下推移。仅检查容器自身高度变化不够，
+        // 因为 shrink_to_content 基于的是旧的兄弟节点 rect.y。
+        match box_type {
+            BoxType::Block | BoxType::Anonymous | BoxType::Inline | BoxType::InlineBlock => {
+                let block = BlockLayout;
+                block.layout(node, viewport);
+            }
+            _ => {}
+        }
     }
 
     /// 递归处理所有子节点的尺寸
@@ -172,8 +198,47 @@ impl LayoutEngine {
                     _ => {}
                 }
             }
+
+            // Phase 0: 应用 max-width 约束（拉伸之后、布局之前）
+            if let Some(ref cs) = child.computed_style {
+                if let Some(max_w_val) = cs.get("max-width") {
+                    if let Some(max_w) = resolve_length_cs(max_w_val) {
+                        if child.rect.width > max_w {
+                            child.rect.width = max_w;
+                        }
+                    }
+                }
+            }
+
+            // Phase 0: margin: 0 auto 水平居中（仅 Block 容器子级，
+            // Flex/Grid 容器由 taffy 的 auto margin 处理）
+            // 跳过 Text/Inline 节点：它们继承父元素的 computed_style，
+            // 但 margin 不应应用于内联级节点
+            if !skip_stretch && !matches!(
+                child.box_type,
+                BoxType::Text | BoxType::Inline
+            ) {
+                if let Some(ref cs) = child.computed_style {
+                    let margin_shorthand = cs.get("margin");
+                    let margin_left = cs.get("margin-left");
+                    let margin_right = cs.get("margin-right");
+                    let auto_left = is_auto_cs(margin_left)
+                        || is_auto_shorthand_cs(margin_shorthand, 3);
+                    let auto_right = is_auto_cs(margin_right)
+                        || is_auto_shorthand_cs(margin_shorthand, 1);
+                    if auto_left || auto_right {
+                        let remaining = parent_content_width - child.rect.width;
+                        if auto_left && auto_right {
+                            child.rect.x += (remaining / 2.0).max(0.0);
+                        } else if auto_left {
+                            child.rect.x += remaining.max(0.0);
+                        }
+                    }
+                }
+            }
+
             let child_viewport = Size::new(viewport.width - node.rect.x, viewport.height - node.rect.y);
-            self.calculate_sizes(&mut node.children[i], child_viewport);
+            self.calculate_sizes(&mut node.children[i], child_viewport, Some(node.box_type.clone()));
         }
     }
 
@@ -278,19 +343,19 @@ impl LayoutEngine {
         for dirty in dirty_nodes {
             if let Some(layout_node) = root.find_layout_node(dirty) {
                 let idx = layout_node as *const LayoutBox as usize;
-                self.relayout_node(root, idx, viewport);
+                self.relayout_node(root, idx, viewport, None);
             }
         }
     }
 
-    fn relayout_node(&mut self, root: &mut LayoutBox, target_ptr: usize, viewport: Size<f32>) {
+    fn relayout_node(&mut self, root: &mut LayoutBox, target_ptr: usize, viewport: Size<f32>, parent_box_type: Option<BoxType>) {
         let current_ptr = root as *const LayoutBox as usize;
         if current_ptr == target_ptr {
-            self.calculate_sizes(root, viewport);
+            self.calculate_sizes(root, viewport, parent_box_type);
             return;
         }
         for child in &mut root.children {
-            self.relayout_node(child, target_ptr, viewport);
+            self.relayout_node(child, target_ptr, viewport, Some(root.box_type.clone()));
         }
     }
 
@@ -309,11 +374,13 @@ impl LayoutEngine {
 ///
 /// computed_styles: 从 style::cascade::compute_element_style 获取
 /// key 为 DOM 节点的 Rc 指针地址
+/// text_measurer: 可选的文本测量器，用于精确测量文本宽度
 pub fn build_layout_tree(
     dom_root: &Rc<RefCell<Node>>,
     computed_styles: &HashMap<usize, ComputedStyle>,
+    text_measurer: Option<&mut TextMeasurer>,
 ) -> LayoutBox {
-    build_layout_box(dom_root, computed_styles, 0)
+    build_layout_box(dom_root, computed_styles, 0, text_measurer)
 }
 
 /// 递归构建 LayoutBox
@@ -321,6 +388,7 @@ fn build_layout_box(
     dom_node: &Rc<RefCell<Node>>,
     computed_styles: &HashMap<usize, ComputedStyle>,
     _depth: usize,
+    mut text_measurer: Option<&mut TextMeasurer>,
 ) -> LayoutBox {
     let node = dom_node.borrow();
     let ptr = Rc::as_ptr(dom_node) as usize;
@@ -402,7 +470,7 @@ fn build_layout_box(
             drop(node);
             let children = dom_node.borrow().child_nodes();
             for child in &children {
-                let child_box = build_layout_box(child, computed_styles, _depth + 1);
+                let child_box = build_layout_box(child, computed_styles, _depth + 1, text_measurer.as_deref_mut());
                 layout_box.append_child(child_box);
             }
 
@@ -454,10 +522,45 @@ fn build_layout_box(
                         }
                     })
                     .unwrap_or(16.0);
-                // 行高 ≈ 字号 × 1.2，宽度 ≈ 字符数 × 字号 × 0.5（sans-serif 估算）
+
+                let font_family = style
+                    .and_then(|s| s.get("font-family"))
+                    .map(|v| match v {
+                        style::values::CSSValue::Keyword(k) => k.as_str(),
+                        _ => "sans-serif",
+                    })
+                    .unwrap_or("sans-serif");
+
+                let font_weight = style
+                    .and_then(|s| s.get("font-weight"))
+                    .map(|v| match v {
+                        style::values::CSSValue::Keyword(k) => match k.as_ref() {
+                            "bold" => 700u16,
+                            "bolder" => 900,
+                            "lighter" => 100,
+                            "normal" => 400,
+                            _ => 400,
+                        },
+                        style::values::CSSValue::Number(n) => *n as u16,
+                        _ => 400,
+                    })
+                    .unwrap_or(400);
+
                 layout_box.rect.height = font_size * 1.2;
-                let char_count = text.chars().count() as f32;
-                layout_box.rect.width = char_count * font_size * 0.5;
+
+                // 优先使用 rustybuzz 精确测量，回退到字符感知估算
+                if let Some(ref mut measurer) = text_measurer {
+                    layout_box.rect.width = measurer.measure_width(
+                        &text,
+                        font_size,
+                        font_family,
+                        font_weight,
+                    );
+                } else {
+                    layout_box.rect.width = text.chars()
+                        .map(|c| text::char_width_factor(c) * font_size)
+                        .sum();
+                }
             }
             layout_box
         }
@@ -466,7 +569,7 @@ fn build_layout_box(
             drop(node);
             let children = dom_node.borrow().child_nodes();
             for child in &children {
-                let child_box = build_layout_box(child, computed_styles, _depth + 1);
+                let child_box = build_layout_box(child, computed_styles, _depth + 1, text_measurer.as_deref_mut());
                 layout_box.append_child(child_box);
             }
             // Document 高度 = 视口高度（在 layout 阶段设置）
@@ -478,7 +581,7 @@ fn build_layout_box(
             drop(node);
             let children = dom_node.borrow().child_nodes();
             for child in &children {
-                let child_box = build_layout_box(child, computed_styles, _depth + 1);
+                let child_box = build_layout_box(child, computed_styles, _depth + 1, text_measurer.as_deref_mut());
                 layout_box.append_child(child_box);
             }
             layout_box
@@ -490,9 +593,9 @@ fn build_layout_box(
     }
 }
 
-/// Phase 0: 从 ComputedStyle 解析简写属性到 LayoutBox 的 padding/margin
+/// Phase 0: 从 ComputedStyle 解析简写属性到 LayoutBox 的 padding/margin/border
 ///
-/// 支持简写（padding/margin）和单边属性（padding-top, margin-left 等）。
+/// 支持简写（padding/margin/border）和单边属性（padding-top, margin-left 等）。
 fn apply_shorthand_property(
     style: Option<&ComputedStyle>,
     layout_box: &mut LayoutBox,
@@ -509,6 +612,25 @@ fn apply_shorthand_property(
         if let Some((t, r, b, l)) = parse_four_sides(v) {
             layout_box.margin = EdgeSizes::new(t, r, b, l);
         }
+    }
+    // 从 border 简写中提取宽度（格式: "1px solid #ddd" → 提取 1px）
+    if let Some(v) = s.get("border") {
+        if let Some(w) = parse_border_width(v) {
+            layout_box.border = EdgeSizes::new(w, w, w, w);
+        }
+    }
+    // 解析 border-radius
+    if let Some(v) = s.get("border-radius") {
+        if let Some(val) = parse_length_value(v) {
+            layout_box.border_radius = BorderRadius::uniform(val);
+        }
+    }
+    // 解析 overflow（支持 overflow-x / overflow-y，后者覆盖简写）
+    if let Some(v) = s.get("overflow") {
+        layout_box.overflow = parse_overflow_value(v);
+    }
+    if let Some(v) = s.get("overflow-y") {
+        layout_box.overflow = parse_overflow_value(v);
     }
 
     // 解析单边属性（覆盖简写对应边）
@@ -562,6 +684,19 @@ fn parse_length_value(value: &style::values::CSSValue) -> Option<f32> {
     }
 }
 
+/// 从 CSSValue 解析 overflow 值
+fn parse_overflow_value(value: &style::values::CSSValue) -> Overflow {
+    match value {
+        style::values::CSSValue::Keyword(k) => match k.as_ref() {
+            "hidden" => Overflow::Hidden,
+            "scroll" => Overflow::Scroll,
+            "auto" => Overflow::Auto,
+            _ => Overflow::Visible,
+        },
+        _ => Overflow::Visible,
+    }
+}
+
 /// 按 CSS 简写规则解析 1-4 个边长值，返回 (top, right, bottom, left)
 fn parse_four_sides(value: &style::values::CSSValue) -> Option<(f32, f32, f32, f32)> {
     let raw = match value {
@@ -581,6 +716,63 @@ fn parse_four_sides(value: &style::values::CSSValue) -> Option<(f32, f32, f32, f
         3 => Some((values[0], values[1], values[2], values[1])),
         4 => Some((values[0], values[1], values[2], values[3])),
         _ => None,
+    }
+}
+
+/// 从 border 简写中提取宽度（如 "1px solid #ddd" → 1.0）
+fn parse_border_width(value: &style::values::CSSValue) -> Option<f32> {
+    let raw = match value {
+        style::values::CSSValue::Keyword(s) => s.as_str(),
+        _ => return None,
+    };
+    // 取第一个空格分隔的 token，如果含 px 则提取数值
+    let first = raw.split_whitespace().next()?;
+    first.strip_suffix("px")?.parse::<f32>().ok()
+}
+
+/// 从 CSSValue 提取长度值（px），用于 max-width/min-width 等
+fn resolve_length_cs(value: &style::values::CSSValue) -> Option<f32> {
+    match value {
+        style::values::CSSValue::Length(val, _) => Some(*val),
+        style::values::CSSValue::Keyword(k) => {
+            if let Some(px) = k.strip_suffix("px") {
+                px.parse::<f32>().ok()
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// 检查 CSSValue 是否为 auto 关键字
+fn is_auto_cs(value: Option<&style::values::CSSValue>) -> bool {
+    matches!(value, Some(style::values::CSSValue::Keyword(k)) if k == "auto")
+}
+
+/// 检查 margin 简写中某一边是否为 auto
+/// index: 0=top, 1=right, 2=bottom, 3=left
+fn is_auto_shorthand_cs(value: Option<&style::values::CSSValue>, index: usize) -> bool {
+    let kw = match value {
+        Some(style::values::CSSValue::Keyword(k)) => k.as_str(),
+        _ => return false,
+    };
+    let parts: Vec<&str> = kw.split_whitespace().collect();
+    match parts.len() {
+        1 => parts[0] == "auto",
+        2 => match index {
+            0 | 2 => parts[0] == "auto",
+            1 | 3 => parts[1] == "auto",
+            _ => false,
+        },
+        3 => match index {
+            0 => parts[0] == "auto",
+            1 | 3 => parts[1] == "auto",
+            2 => parts[2] == "auto",
+            _ => false,
+        },
+        4 => parts.get(index).map_or(false, |&p| p == "auto"),
+        _ => false,
     }
 }
 

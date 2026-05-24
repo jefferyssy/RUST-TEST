@@ -10,3 +10,4 @@ taffy = { workspace = true }
 rustybuzz = { workspace = true }
 fontdb = { workspace = true }
 unicode-linebreak = { workspace = true }
+ab_glyph = "0.2"

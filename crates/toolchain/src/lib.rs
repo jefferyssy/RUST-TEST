@@ -91,11 +91,11 @@ pub fn compile_body_with_options(html_path: &str, css_path: &str, js_path: &str,
     let css_rules = css::parse_css(&css_src);
     let matched_styles = css::match_css_to_elements(&css_rules, &elements, &all_element_vars);
 
-    // === Phase 4: 编译 JS → 事件处理器 ===
-    let handlers = js::compile_js(&js_src, &all_element_vars);
+    // === Phase 4: 编译 JS → 事件处理器 + 共享状态 ===
+    let (handlers, shared_state) = js::compile_js(&js_src, &all_element_vars, &css_rules);
 
     // === Phase 5: 生成 main() 函数体 ===
-    generate_main_body_inner(&root_assignments, &matched_styles, &handlers, &css_rules, opts)
+    generate_main_body_inner(&root_assignments, &matched_styles, &handlers, &css_rules, opts, &shared_state)
 }
 
 /// 编译 HTML+CSS+JS 为完整可编译的 main.rs（使用默认选项）
@@ -234,6 +234,7 @@ pub(crate) fn generate_main_body_inner(
     handlers: &[js::EventHandler],
     css_rules: &[css::CssRule],
     opts: &CompileOptions,
+    shared_state: &[js::SharedStateVar],
 ) -> String {
     let mut code = String::new();
 
@@ -288,24 +289,31 @@ pub(crate) fn generate_main_body_inner(
     }
     code.push('\n');
 
+    // === 生成共享状态变量 ===
+    if !shared_state.is_empty() {
+        code.push_str("    // 共享状态（JS 全局变量）\n");
+        for sv in shared_state {
+            code.push_str(&format!(
+                "    let {} = std::rc::Rc::new(std::cell::RefCell::new({}i32));\n",
+                sv.name, sv.initial_value
+            ));
+        }
+        code.push('\n');
+    }
+
     // === 生成事件处理器 ===
     code.push_str("    // ====== Compiled from app.js ======\n\n");
 
-    // 收集所有需要 clone 的变量
-    let mut all_cloned_vars: Vec<String> = Vec::new();
     for handler in handlers {
-        for cv in &handler.cloned_vars {
-            if !all_cloned_vars.contains(cv) {
-                all_cloned_vars.push(cv.clone());
-            }
-        }
-    }
-
-    for handler in handlers {
-        // 生成 clone 变量
+        // 生成 clone 变量（DOM 元素）
         for cv in &handler.cloned_vars {
             let base = cv.trim_end_matches("_clone");
             code.push_str(&format!("    let {} = {}.clone();\n", cv, base));
+        }
+
+        // 生成 clone 变量（共享状态 Rc）
+        for sv_name in &handler.shared_vars {
+            code.push_str(&format!("    let {}_clone = {}.clone();\n", sv_name, sv_name));
         }
 
         // 生成 add_event_listener 调用

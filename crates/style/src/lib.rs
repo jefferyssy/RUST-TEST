@@ -46,7 +46,7 @@ pub use values::{
 pub use properties::{
     parse_aspect_ratio, parse_contain, parse_content_visibility,
     parse_outline_offset, parse_font_variant, parse_font_stretch,
-    parse_word_break, parse_overflow_wrap,
+    parse_word_break, parse_overflow, parse_overflow_wrap,
     parse_transform_style, parse_perspective, parse_perspective_origin,
     parse_backface_visibility, parse_touch_action, parse_will_change,
     parse_phase3_property,

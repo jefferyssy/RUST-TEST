@@ -19,7 +19,7 @@ impl CodeGenerator {
         matched_styles: &[(String, String)],
         handlers: &[EventHandler],
     ) -> String {
-        crate::generate_main_body_inner(assignments, matched_styles, handlers, &[], &crate::CompileOptions::default())
+        crate::generate_main_body_inner(assignments, matched_styles, handlers, &[], &crate::CompileOptions::default(), &[])
     }
 }
 

@@ -11,10 +11,10 @@ fn test_measure_empty() {
 #[test]
 fn test_measure_estimates_width() {
     let mut m = TextMeasurer::new();
-    // "Hello" has 5 chars, font_size=16, estimated width = 5 * 16 * 0.6 = 48
+    // 使用 rustybuzz 精确测量，"Hello" 宽度依赖系统字体，但应 > 0
     let size = m.measure("Hello", 16.0, "sans-serif", 400);
-    assert!(size.width > 0.0);
-    assert_eq!(size.width, 48.0);
+    assert!(size.width > 0.0, "width should be positive, got {}", size.width);
+    assert!(size.width < 100.0, "width should be reasonable, got {}", size.width);
     assert_eq!(size.height, 19.2);
 }
 

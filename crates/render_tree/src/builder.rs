@@ -45,17 +45,29 @@ impl DisplayListBuilder {
 
     /// 处理单个布局节点
     fn process_node(&mut self, node: &LayoutBox) {
+        // 0. 盒阴影 → BoxShadow（渲染在背景之下）
+        if let Some(shadow) = Self::extract_box_shadow(node) {
+            self.display_list.push(shadow);
+        }
+
         // 1. 背景色 → FillRect
         if let Some(color) = Self::extract_bg_color(node) {
             self.display_list.push(PaintCommand::FillRect {
                 rect: node.rect,
                 color,
+                radius: node.border_radius.top_left,
             });
         }
 
         // 2. 边框 → Border
         if let Some(border) = Self::extract_border(node) {
             self.display_list.push(border);
+        }
+        // 2b. 单边边框（border-top/right/bottom/left）
+        for side in &["border-top", "border-right", "border-bottom", "border-left"] {
+            if let Some(border) = Self::extract_single_border(node, side) {
+                self.display_list.push(border);
+            }
         }
 
         // 3. 文本 → Text
@@ -135,6 +147,77 @@ impl DisplayListBuilder {
         })
     }
 
+    /// 从 computed style 中提取单边边框（border-top/right/bottom/left）
+    fn extract_single_border(node: &LayoutBox, property: &str) -> Option<PaintCommand> {
+        if node.box_type == BoxType::Text {
+            return None;
+        }
+        let style = node.computed_style.as_ref()?;
+        let border_val = style.get(property)?;
+        let raw: &str = match border_val {
+            style::values::CSSValue::Keyword(s) => s,
+            _ => return None,
+        };
+        if raw == "none" || raw == "initial" {
+            return None;
+        }
+        let tokens: Vec<&str> = raw.split_whitespace().collect();
+        let mut width = 1.0f32;
+        let mut color = Color::rgb(0, 0, 0);
+        for token in &tokens {
+            if let Some(px) = token.strip_suffix("px") {
+                if let Ok(w) = px.parse::<f32>() {
+                    width = w;
+                }
+            }
+            let parsed = style::values::parse_color(token);
+            if parsed != Color::BLACK || *token == "black" {
+                color = parsed;
+            }
+        }
+
+        let side = match property {
+            "border-top" => 0,
+            "border-right" => 1,
+            "border-bottom" => 2,
+            "border-left" => 3,
+            _ => return None,
+        };
+        let mut widths = [0.0f32; 4];
+        let mut colors = [Color::TRANSPARENT; 4];
+        widths[side] = width;
+        colors[side] = color;
+
+        Some(PaintCommand::Border {
+            rect: node.rect,
+            widths,
+            colors,
+            radius: node.border_radius.top_left,
+            style: BorderStyle::Solid,
+        })
+    }
+
+    /// 从 computed style 中提取盒阴影
+    fn extract_box_shadow(node: &LayoutBox) -> Option<PaintCommand> {
+        let style = node.computed_style.as_ref()?;
+        let shadow = style.get("box-shadow")?;
+        match shadow {
+            style::values::CSSValue::BoxShadow(box_shadow) => {
+                Some(PaintCommand::BoxShadow {
+                    rect: node.rect,
+                    offset_x: box_shadow.offset_x,
+                    offset_y: box_shadow.offset_y,
+                    blur_radius: box_shadow.blur_radius,
+                    spread_radius: box_shadow.spread_radius,
+                    color: box_shadow.color,
+                    inset: box_shadow.inset,
+                    radius: node.border_radius.top_left,
+                })
+            }
+            _ => None,
+        }
+    }
+
     /// 从布局节点提取文本内容
     fn extract_text(node: &LayoutBox) -> Option<PaintCommand> {
         if node.box_type != BoxType::Text {
@@ -145,9 +228,23 @@ impl DisplayListBuilder {
         let node_borrow = dom_node.borrow();
         let text = node_borrow.text_content();
 
-        if text.is_empty() {
-            return None;
-        }
+        // 文本为空时，检查父节点是否有 placeholder 属性
+        let (display_text, is_placeholder) = if text.is_empty() {
+            let placeholder = node_borrow.parent_node().and_then(|parent| {
+                let p = parent.borrow();
+                if let dom::NodeType::Element(elem) = &p.node_type {
+                    elem.get_attribute("placeholder")
+                } else {
+                    None
+                }
+            });
+            match placeholder {
+                Some(p) => (p, true),
+                None => return None,
+            }
+        } else {
+            (text, false)
+        };
 
         let font_size = node
             .computed_style
@@ -169,12 +266,15 @@ impl DisplayListBuilder {
             })
             .unwrap_or_else(|| "sans-serif".to_string());
 
-        let color = node
-            .computed_style
-            .as_ref()
-            .and_then(|s| s.get("color"))
-            .and_then(parse_css_value_color)
-            .unwrap_or(Color::rgb(0, 0, 0));
+        let color = if is_placeholder {
+            Color::rgba(153, 153, 153, 200) // 浅灰色 placeholder
+        } else {
+            node.computed_style
+                .as_ref()
+                .and_then(|s| s.get("color"))
+                .and_then(parse_css_value_color)
+                .unwrap_or(Color::rgb(0, 0, 0))
+        };
 
         let font_weight = node
             .computed_style
@@ -198,7 +298,7 @@ impl DisplayListBuilder {
         let half_leading = (node.rect.height - font_size).max(0.0) / 2.0;
 
         Some(PaintCommand::Text {
-            text,
+            text: display_text,
             font_size,
             font_family,
             font_weight,

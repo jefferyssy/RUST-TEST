@@ -20,6 +20,8 @@ pub enum PaintCommand {
         rect: Rect<Pixel>,
         /// 填充颜色
         color: Color,
+        /// 圆角半径（Phase 1+）
+        radius: f32,
     },
     /// 绘制文本
     Text {
@@ -38,6 +40,7 @@ pub enum PaintCommand {
         rect: Rect<Pixel>,
         widths: [f32; 4],
         colors: [Color; 4],
+        /// 圆角半径
         radius: f32,
         /// 边框样式
         style: BorderStyle,
@@ -52,6 +55,8 @@ pub enum PaintCommand {
         spread_radius: f32,
         color: Color,
         inset: bool,
+        /// 圆角半径（继承自元素的 border-radius）
+        radius: f32,
     },
     /// 绘制图像
     Image {
@@ -156,7 +161,7 @@ impl DisplayList {
                     PaintCommand::Image { .. } => 1,
                     PaintCommand::Border { .. } => 2,
                     PaintCommand::Text { .. } => 3,
-                    PaintCommand::BoxShadow { .. } => 4,
+                    PaintCommand::BoxShadow { .. } => -1,
                     PaintCommand::Clip { .. } => 5,
                     PaintCommand::Opacity { .. } => 6,
                 }
@@ -183,6 +188,21 @@ impl DisplayList {
     /// 是否为空
     pub fn is_empty(&self) -> bool {
         self.commands.is_empty()
+    }
+
+    /// 移除最后一条命令（用于光标等临时绘制）
+    pub fn pop(&mut self) -> Option<PaintCommand> {
+        self.commands.pop()
+    }
+
+    /// 获取当前命令数量（用于快照）
+    pub fn command_count(&self) -> usize {
+        self.commands.len()
+    }
+
+    /// 从指定索引开始排空命令，返回排空的命令列表
+    pub fn drain_from(&mut self, from: usize) -> Vec<PaintCommand> {
+        self.commands.drain(from..).collect()
     }
 }
 

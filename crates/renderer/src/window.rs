@@ -28,12 +28,14 @@ use layout::build_layout_tree;
 use layout::layout_box::LayoutBox;
 use layout::LayoutEngine;
 use render_tree::builder::DisplayListBuilder;
-use render_tree::DisplayList;
+use render_tree::{DisplayList, PaintCommand};
+use dom::Rect;
 use crate::WgpuBackend;
 use crate::RenderBackend;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
+use winit::keyboard::{Key, NamedKey};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowAttributes};
 
@@ -129,7 +131,7 @@ impl WebWindow {
         drop(doc); // 释放 document 借用
 
         // 2. 构建布局树
-        let mut layout_root = layout::build_layout_tree(&body, &styles);
+        let mut layout_root = layout::build_layout_tree(&body, &styles, Some(&mut self.layout_engine.text_measurer));
 
         // 3. 执行布局计算
         let viewport = dom::Size::new(size.0 as f32, size.1 as f32);
@@ -164,6 +166,9 @@ impl WebWindow {
             layout_engine,
             cursor_pos: (0.0, 0.0),
             animation_scheduler,
+            focused_element: None,
+            cursor_visible: true,
+            last_cursor_toggle: 0.0,
         };
 
         let _ = event_loop.run_app(&mut app);
@@ -185,6 +190,12 @@ struct App {
     layout_engine: LayoutEngine,
     cursor_pos: (f32, f32),
     animation_scheduler: AnimationFrameScheduler,
+    /// Phase 2: 当前获得焦点的元素（用于键盘输入）
+    focused_element: Option<Rc<RefCell<Node>>>,
+    /// 光标闪烁可见状态
+    cursor_visible: bool,
+    /// 上次光标切换时间（毫秒）
+    last_cursor_toggle: f64,
 }
 
 impl ApplicationHandler for App {
@@ -226,11 +237,33 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested => {
                 if let Some(ref renderer) = self.renderer {
                     let mut r = renderer.borrow_mut();
-                    if let Some(ref list) = self.display_list {
-                        r.render(list);
-                    } else {
-                        r.render(&DisplayList::new());
+                    let mut list = self.display_list.take().unwrap_or_default();
+                    // 如果输入框获得焦点且光标可见，推入光标矩形
+                    if self.cursor_visible {
+                        if let Some(ref focused) = self.focused_element {
+                            if let Some(layout_root) = self.layout_root.as_ref() {
+                                if let Some(cursor_rect) = Self::find_layout_rect(layout_root, focused) {
+                                    // 光标：2px 宽，使用蓝色可见
+                                    list.push(PaintCommand::FillRect {
+                                        rect: Rect::new(
+                                            cursor_rect.x + 4.0,
+                                            cursor_rect.y + 4.0,
+                                            2.0,
+                                            (cursor_rect.height - 8.0).max(10.0),
+                                        ),
+                                        color: dom::Color::rgb(74, 144, 217), // #4a90d9 蓝色光标
+                                        radius: 0.0,
+                                    });
+                                }
+                            }
+                        }
                     }
+                    r.render(&list);
+                    // 移除光标命令以便下一帧重新计算
+                    if self.cursor_visible && self.focused_element.is_some() {
+                        list.pop();
+                    }
+                    self.display_list = Some(list);
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
@@ -240,16 +273,32 @@ impl ApplicationHandler for App {
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
                 self.handle_click();
             }
+            WindowEvent::KeyboardInput {
+                event: KeyEvent {
+                    state: ElementState::Pressed,
+                    logical_key,
+                    text,
+                    ..
+                },
+                ..
+            } => {
+                self.handle_keyboard(&logical_key, text.as_deref());
+            }
             _ => {}
         }
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        // Phase 1: 触发动画帧回调
         let now = std::time::Instant::now()
             .elapsed()
             .as_secs_f64() * 1000.0;
         self.animation_scheduler.tick(now);
+
+        // 光标闪烁：每 530ms 切换一次
+        if now - self.last_cursor_toggle > 530.0 {
+            self.cursor_visible = !self.cursor_visible;
+            self.last_cursor_toggle = now;
+        }
 
         if let Some(ref window) = self.window {
             window.request_redraw();
@@ -287,12 +336,82 @@ impl App {
         };
         drop(target_ref);
 
-        // 3. 创建并派发鼠标点击事件
+        // 3. 焦点管理：点击 input 元素时设置焦点
+        {
+            let node_ref = dom_node.borrow();
+            if let NodeType::Element(elem) = &node_ref.node_type {
+                if elem.tag_name() == "input" {
+                    self.focused_element = Some(dom_node.clone());
+                } else {
+                    self.focused_element = None;
+                }
+            } else {
+                self.focused_element = None;
+            }
+        }
+
+        // 4. 创建并派发鼠标点击事件
         let mouse_event = MouseEvent::new("click", x as f64, y as f64, 0);
         dom_node.borrow_mut().dispatch_event(&mouse_event.event);
 
-        // 4. 重建渲染管线（事件回调可能修改了 DOM）
+        // 5. 重建渲染管线（事件回调可能修改了 DOM）
         self.relayout();
+    }
+
+    /// 处理键盘输入：将文本追加/删除到聚焦的 input 元素
+    fn handle_keyboard(&mut self, key: &Key, text: Option<&str>) {
+        let focused = match &self.focused_element {
+            Some(el) => el.clone(),
+            None => return,
+        };
+
+        let mut node = focused.borrow_mut();
+
+        match key {
+            Key::Named(NamedKey::Backspace) => {
+                // 删除最后一个字符
+                let current = node.text_content();
+                if !current.is_empty() {
+                    let mut chars: Vec<char> = current.chars().collect();
+                    chars.pop();
+                    let new_text: String = chars.into_iter().collect();
+                    // 删除旧的文本子节点，创建新的
+                    node.set_text_content(&new_text);
+                }
+            }
+            Key::Named(NamedKey::Enter) => {
+                // Enter 键：可以触发提交逻辑，目前不做特殊处理
+            }
+            _ => {
+                // 普通字符输入
+                if let Some(t) = text {
+                    if !t.is_empty() && !t.chars().any(|c| c.is_control()) {
+                        let current = node.text_content();
+                        let new_text = format!("{}{}", current, t);
+                        node.set_text_content(&new_text);
+                    }
+                }
+            }
+        }
+        drop(node);
+
+        // 重建渲染管线以反映文本变更
+        self.relayout();
+    }
+
+    /// 在布局树中查找指定 DOM 节点的布局矩形
+    fn find_layout_rect(root: &LayoutBox, target: &Rc<RefCell<Node>>) -> Option<Rect<f32>> {
+        if let Some(ref node) = root.node {
+            if Rc::ptr_eq(node, target) {
+                return Some(root.rect);
+            }
+        }
+        for child in &root.children {
+            if let Some(rect) = Self::find_layout_rect(child, target) {
+                return Some(rect);
+            }
+        }
+        None
     }
 
     /// 重建布局和 DisplayList（窗口 resize 或 DOM 变更后调用）
@@ -319,7 +438,7 @@ impl App {
         let mut styles: HashMap<usize, ComputedStyle> = HashMap::new();
         compute_dom_styles(&dom_root, &[], None, &mut styles);
 
-        let mut new_root = build_layout_tree(&body, &styles);
+        let mut new_root = build_layout_tree(&body, &styles, Some(&mut self.layout_engine.text_measurer));
         self.layout_engine.layout(&mut new_root, viewport);
         drop(doc_ref);
 
@@ -364,10 +483,17 @@ fn compute_dom_styles(
             }
         }
         NodeType::Text(_) => {
-            // 文本节点继承父元素的样式（font-size/color 等）
+            // 文本节点仅继承可继承属性（color, font-size, font-family, text-align）
+            // 不继承 background, margin, padding, border 等盒模型属性
             if let Some(ps) = parent_style {
                 let ptr = Rc::as_ptr(node) as usize;
-                out.insert(ptr, ps.clone());
+                let mut inherited = ComputedStyle::new();
+                for prop in &["color", "font-size", "font-family", "font-weight", "font-style", "text-align"] {
+                    if let Some(val) = ps.properties.get(*prop) {
+                        inherited.properties.insert(prop.to_string(), val.clone());
+                    }
+                }
+                out.insert(ptr, inherited);
             }
         }
         NodeType::Document | NodeType::DocumentFragment | NodeType::Comment(_) => {

@@ -17,11 +17,14 @@ body {
 .logo {
   font-size: 22px;
   font-weight: bold;
+  background: green;
 }
 
 .nav-items {
   display: flex;
   gap: 4px;
+  background: blue;
+  border: #f5f5f5 2px solid;
 }
 
 .item {
@@ -35,6 +38,7 @@ body {
 .status {
   font-size: 13px;
   color: #95a5a6;
+  background: yellow;
 }
 
 .content {

@@ -40,7 +40,8 @@
       "Bash(kill %1)",
       "Bash(taskkill /F /IM counter.exe)",
       "Bash(rm -f e:/demoSpace/rust-test/generated/counter/target/debug/counter.exe)",
-      "Bash(timeout 8 e:/demoSpace/rust-test/generated/counter/target/debug/counter.exe)"
+      "Bash(timeout 8 e:/demoSpace/rust-test/generated/counter/target/debug/counter.exe)",
+      "Bash(powershell -Command \"Stop-Process -Name 'flex-nav' -Force -ErrorAction SilentlyContinue\")"
     ]
   }
 }

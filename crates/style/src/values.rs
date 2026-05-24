@@ -31,6 +31,19 @@ pub enum CSSValue {
     Gradient(Box<Gradient>),
     /// 长度+百分比组合（用于 calc 中间结果）
     LengthPercentage(f32, f32, CSSUnit),
+    /// 盒阴影 (Phase 1)
+    BoxShadow(Box<BoxShadowValue>),
+}
+
+/// 盒阴影值
+#[derive(Debug, Clone, PartialEq)]
+pub struct BoxShadowValue {
+    pub offset_x: f32,
+    pub offset_y: f32,
+    pub blur_radius: f32,
+    pub spread_radius: f32,
+    pub color: Color,
+    pub inset: bool,
 }
 
 /// CSS 单位
@@ -216,7 +229,19 @@ pub enum StepDirection { Start, End }
 
 /// 解析 CSS 属性值
 pub fn parse_css_value(property: &str, value: &str) -> CSSValue {
-    let _ = property;
+    // box-shadow 需要特殊解析
+    if property == "box-shadow" {
+        if let Some(box_shadow) = parse_box_shadow(value) {
+            return CSSValue::BoxShadow(Box::new(box_shadow));
+        }
+    }
+    // border 简写属性保持原始字符串，由 builder 解析
+    if (property == "border" || property == "border-top" || property == "border-right"
+        || property == "border-bottom" || property == "border-left")
+        && value.contains(' ')
+    {
+        return CSSValue::Keyword(value.to_string());
+    }
     // 尝试颜色解析
     if let Some(color) = try_parse_color(value) {
         return CSSValue::Color(color);
@@ -232,6 +257,48 @@ pub fn parse_css_value(property: &str, value: &str) -> CSSValue {
 /// 解析颜色值
 pub fn parse_color(value: &str) -> Color {
     try_parse_color(value).unwrap_or(Color::BLACK)
+}
+
+/// 解析 box-shadow 值
+/// 格式: offset-x offset-y blur-radius spread-radius color [inset]
+fn parse_box_shadow(value: &str) -> Option<BoxShadowValue> {
+    let value = value.trim();
+    if value == "none" {
+        return None;
+    }
+
+    let tokens: Vec<&str> = value.split_whitespace().collect();
+    let inset = tokens.iter().any(|t| *t == "inset");
+
+    // 提取非 inset、非颜色的数值 token
+    let mut nums: Vec<f32> = Vec::new();
+    let mut color = Color::rgba(0, 0, 0, 64); // 默认半透明黑
+
+    for token in &tokens {
+        if *token == "inset" {
+            continue;
+        }
+        if let Some(parsed_color) = try_parse_color(token) {
+            color = parsed_color;
+        } else if let Some((len, _)) = try_parse_length(token) {
+            nums.push(len);
+        } else if let Ok(n) = token.parse::<f32>() {
+            nums.push(n);
+        }
+    }
+
+    if nums.is_empty() {
+        return None;
+    }
+
+    Some(BoxShadowValue {
+        offset_x: *nums.first().unwrap_or(&0.0),
+        offset_y: *nums.get(1).unwrap_or(&0.0),
+        blur_radius: nums.get(2).copied().unwrap_or(0.0).max(0.0),
+        spread_radius: nums.get(3).copied().unwrap_or(0.0),
+        color,
+        inset,
+    })
 }
 
 /// 解析长度值

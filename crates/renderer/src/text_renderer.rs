@@ -206,7 +206,9 @@ impl TextRenderer {
     ) {
         let atlas_w = self.atlas_width as f32;
         let atlas_h = self.atlas_height as f32;
-        let scale = ab_glyph::PxScale::from(font_size);
+        // 2x 超采样：以 2 倍分辨率光栅化字形，渲染时缩放回原始大小，显著提升清晰度
+        let supersample = 2.0;
+        let render_scale = ab_glyph::PxScale::from(font_size * supersample);
 
         // 加载字体并提取所需数据（在块内释放 self 上的借用）
         let (font_data, font_hash, face_index) = {
@@ -259,21 +261,25 @@ impl TextRenderer {
                 size_bits,
             };
 
-            let glyph = self.ensure_glyph(&ag_font, &key, glyph_id, scale);
+            let glyph = self.ensure_glyph(&ag_font, &key, glyph_id, render_scale);
 
             // baseline_y 是基线位置，bearing_y = 基线到字形顶部的距离
+            // bearing 值在超采样空间，需缩放回原始空间
             let gx = cursor_x
                 + pos.x_offset as f32 * scale_factor
-                + glyph.bearing_x;
+                + glyph.bearing_x / supersample;
             let gy = baseline_y + pos.y_offset as f32 * scale_factor
-                - glyph.bearing_y;
+                - glyph.bearing_y / supersample;
 
             if glyph.width > 0 && glyph.height > 0 {
+                // 目标矩形缩放回原始字体大小
+                let dst_w = glyph.width as f32 / supersample;
+                let dst_h = glyph.height as f32 / supersample;
                 instances.extend_from_slice(&[
                     gx,
                     gy,
-                    glyph.width as f32,
-                    glyph.height as f32,
+                    dst_w,
+                    dst_h,
                     glyph.atlas_x as f32 / atlas_w,
                     glyph.atlas_y as f32 / atlas_h,
                     glyph.width as f32 / atlas_w,
@@ -325,11 +331,13 @@ impl TextRenderer {
                         advance,
                     }
                 } else {
-                    let (ax, ay) = self.allocate_atlas_region(gw, gh);
-                    // 光栅化到 CPU 缓冲区
+                    // 分配时留 1px 边距，防止线性采样渗透到相邻字形
+                    let pad = 1u32;
+                    let (ax, ay) = self.allocate_atlas_region(gw + pad * 2, gh + pad * 2);
+                    // 光栅化到 CPU 缓冲区（偏移 pad 写入，留出边距）
                     outlined.draw(|px, py, coverage| {
-                        let bx = ax as usize + px as usize;
-                        let by = ay as usize + py as usize;
+                        let bx = ax as usize + pad as usize + px as usize;
+                        let by = ay as usize + pad as usize + py as usize;
                         if bx < self.atlas_width as usize
                             && by < self.atlas_height as usize
                         {
@@ -340,8 +348,8 @@ impl TextRenderer {
                     });
                     self.atlas_dirty = true;
                     GlyphEntry {
-                        atlas_x: ax,
-                        atlas_y: ay,
+                        atlas_x: ax + pad,
+                        atlas_y: ay + pad,
                         width: gw,
                         height: gh,
                         bearing_x,
@@ -427,38 +435,48 @@ impl TextRenderer {
     }
 
     /// 确保字体已加载（按 family + weight）
+    /// 支持逗号分隔的字体族名（CSS font-family fallback 机制）
     fn ensure_font(&mut self, family: &str, weight: u16) {
         let key = format!("{}-{}", family, weight);
         if self.loaded_fonts.contains_key(&key) {
             return;
         }
 
-        // 将 CSS 泛型字体族名映射到 fontdb::Family 枚举
-        let fontdb_family = match family {
-            "serif" => fontdb::Family::Serif,
-            "sans-serif" => fontdb::Family::SansSerif,
-            "monospace" => fontdb::Family::Monospace,
-            "cursive" => fontdb::Family::Cursive,
-            "fantasy" => fontdb::Family::Fantasy,
-            _ => fontdb::Family::Name(family),
-        };
+        // 拆分逗号分隔的字体族名，逐个尝试
+        let families: Vec<&str> = family
+            .split(',')
+            .map(|s| s.trim().trim_matches('"').trim_matches('\''))
+            .filter(|s| !s.is_empty())
+            .collect();
 
-        let query = self.font_db.query(&fontdb::Query {
-            families: &[fontdb_family],
-            weight: fontdb::Weight(weight),
-            ..Default::default()
-        });
+        for fam in &families {
+            let fontdb_family = match *fam {
+                "serif" => fontdb::Family::Serif,
+                "sans-serif" => fontdb::Family::SansSerif,
+                "monospace" => fontdb::Family::Monospace,
+                "cursive" => fontdb::Family::Cursive,
+                "fantasy" => fontdb::Family::Fantasy,
+                _ => fontdb::Family::Name(fam),
+            };
 
-        if let Some(face_id) = query {
-            if let Some(face_info) = self.font_db.face(face_id) {
-                let path: Option<std::path::PathBuf> = match &face_info.source {
-                    fontdb::Source::File(p) | fontdb::Source::SharedFile(p, _) => {
-                        Some(p.clone())
+            let query = self.font_db.query(&fontdb::Query {
+                families: &[fontdb_family],
+                weight: fontdb::Weight(weight),
+                ..Default::default()
+            });
+
+            if let Some(face_id) = query {
+                if let Some(face_info) = self.font_db.face(face_id) {
+                    let path: Option<std::path::PathBuf> = match &face_info.source {
+                        fontdb::Source::File(p) | fontdb::Source::SharedFile(p, _) => {
+                            Some(p.clone())
+                        }
+                        _ => None,
+                    };
+                    if let Some(ref path) = path {
+                        self.load_font_from_path(&key, path, face_info.index);
+                        return; // 找到第一个可用字体即停止
                     }
-                    _ => None,
-                };
-                if let Some(ref path) = path {
-                    self.load_font_from_path(&key, path, face_info.index);
                 }
             }
         }

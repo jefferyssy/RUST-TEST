@@ -92,6 +92,19 @@ pub fn parse_word_break(value: &str) -> CSSValue {
     }
 }
 
+/// overflow: 溢出处理方式
+/// 值: visible | hidden | scroll | auto
+/// 也支持 overflow-x / overflow-y
+pub fn parse_overflow(value: &str) -> CSSValue {
+    match value.trim() {
+        "visible" => CSSValue::Keyword("visible".to_string()),
+        "hidden" => CSSValue::Keyword("hidden".to_string()),
+        "scroll" => CSSValue::Keyword("scroll".to_string()),
+        "auto" => CSSValue::Keyword("auto".to_string()),
+        other => CSSValue::Keyword(other.to_string()),
+    }
+}
+
 /// overflow-wrap: 溢出换行
 /// 值: normal | anywhere | break-word
 pub fn parse_overflow_wrap(value: &str) -> CSSValue {
@@ -183,6 +196,7 @@ pub fn parse_phase3_property(property: &str, value: &str) -> Option<CSSValue> {
         "font-variant" => Some(parse_font_variant(value)),
         "font-stretch" => Some(parse_font_stretch(value)),
         "word-break" => Some(parse_word_break(value)),
+        "overflow" | "overflow-x" | "overflow-y" => Some(parse_overflow(value)),
         "overflow-wrap" => Some(parse_overflow_wrap(value)),
         "transform-style" => Some(parse_transform_style(value)),
         "perspective" => Some(parse_perspective(value)),

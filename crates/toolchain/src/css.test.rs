@@ -36,25 +36,35 @@ fn test_parse_multiple_rules() {
 
 #[test]
 fn test_selector_matches_tag() {
-    assert!(selector_matches("div", "div", &[], None));
-    assert!(!selector_matches("span", "div", &[], None));
+    assert!(selector_matches("div", "div", &[], None, false));
+    assert!(!selector_matches("span", "div", &[], None, false));
 }
 
 #[test]
 fn test_selector_matches_class() {
-    assert!(selector_matches(".foo", "div", &["foo".to_string()], None));
-    assert!(!selector_matches(".bar", "div", &["foo".to_string()], None));
+    assert!(selector_matches(".foo", "div", &["foo".to_string()], None, false));
+    assert!(!selector_matches(".bar", "div", &["foo".to_string()], None, false));
 }
 
 #[test]
 fn test_selector_matches_id() {
-    assert!(selector_matches("#main", "div", &[], Some("main")));
-    assert!(!selector_matches("#other", "div", &[], Some("main")));
+    assert!(selector_matches("#main", "div", &[], Some("main"), false));
+    assert!(!selector_matches("#other", "div", &[], Some("main"), false));
 }
 
 #[test]
 fn test_selector_matches_complex() {
-    assert!(selector_matches("div.container#main", "div", &["container".to_string()], Some("main")));
+    assert!(selector_matches("div.container#main", "div", &["container".to_string()], Some("main"), false));
+}
+
+#[test]
+fn test_selector_matches_last_child() {
+    // :last-child 伪类：is_last_child=true 时匹配，false 时不匹配
+    assert!(selector_matches(".todo-item:last-child", "li", &["todo-item".to_string()], None, true));
+    assert!(!selector_matches(".todo-item:last-child", "li", &["todo-item".to_string()], None, false));
+    // 无 :last-child 的规则不受 is_last_child 影响
+    assert!(selector_matches(".todo-item", "li", &["todo-item".to_string()], None, false));
+    assert!(selector_matches(".todo-item", "li", &["todo-item".to_string()], None, true));
 }
 
 #[test]

@@ -71,7 +71,7 @@ impl BatchOptimizer {
 
         for cmd in commands {
             match &cmd {
-                PaintCommand::FillRect { rect, color } => {
+                PaintCommand::FillRect { rect, color, .. } => {
                     if color.a == 255 {
                         let right = rect.x + rect.width;
                         let bottom = rect.y + rect.height;
@@ -112,6 +112,7 @@ mod tests {
         PaintCommand::FillRect {
             rect: Rect { x, y, width: w, height: h },
             color,
+            radius: 0.0,
         }
     }
 

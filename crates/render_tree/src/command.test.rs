@@ -14,6 +14,7 @@ fn test_push_and_commands() {
     dl.push(PaintCommand::FillRect {
         rect: Rect::new(0.0, 0.0, 100.0, 50.0),
         color: Color::rgb(255, 0, 0),
+        radius: 0.0,
     });
     assert_eq!(dl.len(), 1);
     assert!(!dl.is_empty());
@@ -26,6 +27,7 @@ fn test_clear() {
     dl.push(PaintCommand::FillRect {
         rect: Rect::new(0.0, 0.0, 10.0, 10.0),
         color: Color::WHITE,
+        radius: 0.0,
     });
     assert_eq!(dl.len(), 1);
     dl.clear();
@@ -38,6 +40,7 @@ fn test_multiple_commands() {
     dl.push(PaintCommand::FillRect {
         rect: Rect::new(0.0, 0.0, 100.0, 100.0),
         color: Color::rgb(255, 0, 0),
+        radius: 0.0,
     });
     dl.push(PaintCommand::Border {
         rect: Rect::new(0.0, 0.0, 100.0, 100.0),
@@ -66,6 +69,7 @@ fn test_sort_by_z_order() {
     dl.push(PaintCommand::FillRect {
         rect: Rect::new(0.0, 0.0, 10.0, 10.0),
         color: Color::rgb(255, 0, 0),
+        radius: 0.0,
     });
     // sort is a no-op in Phase 0, just ensure it doesn't panic
     dl.sort_by_z_order();

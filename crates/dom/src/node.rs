@@ -102,8 +102,9 @@ impl Node {
         child
     }
 
-    /// 通过 Rc 指针地址移除子节点（内部使用）
-    fn remove_child_by_ptr(&mut self, child: &Rc<RefCell<Node>>) {
+    /// 通过 Rc 指针地址移除子节点
+    /// 相比 remove_child(&Node)，此方法不借用 RefCell，避免与后续 borrow_mut 冲突
+    pub fn remove_child_by_ptr(&mut self, child: &Rc<RefCell<Node>>) {
         let target_ptr = Rc::as_ptr(child);
         if let Some(pos) = self.children.iter().position(|c| Rc::as_ptr(c) == target_ptr) {
             let removed = self.children.remove(pos);
@@ -666,6 +667,14 @@ impl Node {
     pub fn set_style(&mut self, style_str: &str) {
         if let NodeType::Element(e) = &mut self.node_type {
             e.parse_and_set_style(style_str);
+            self.mark_dirty(true);
+        }
+    }
+
+    /// 设置单个样式属性（保留已有样式，仅 Element 节点有效）
+    pub fn set_style_property(&mut self, property: &str, value: &str) {
+        if let NodeType::Element(e) = &mut self.node_type {
+            e.set_style_property(property, value);
             self.mark_dirty(true);
         }
     }

@@ -138,6 +138,44 @@ impl ElementData {
         self.attributes.insert("style".to_string(), style_str.to_string());
     }
 
+    /// 设置单个样式属性（保留 attributes["style"] 中的其他已有样式）
+    pub fn set_style_property(&mut self, property: &str, value: &str) {
+        self.set_style_value(property, value);
+
+        let existing = self.attributes.get("style").cloned().unwrap_or_default();
+        let mut new_style = String::new();
+        let mut found = false;
+
+        for part in existing.split(';') {
+            let part = part.trim();
+            if let Some((k, _)) = part.split_once(':') {
+                if k.trim() == property {
+                    if !new_style.is_empty() {
+                        new_style.push_str("; ");
+                    }
+                    new_style.push_str(&format!("{}: {}", property, value));
+                    found = true;
+                    continue;
+                }
+            }
+            if !part.is_empty() {
+                if !new_style.is_empty() {
+                    new_style.push_str("; ");
+                }
+                new_style.push_str(part);
+            }
+        }
+
+        if !found {
+            if !new_style.is_empty() {
+                new_style.push_str("; ");
+            }
+            new_style.push_str(&format!("{}: {}", property, value));
+        }
+
+        self.attributes.insert("style".to_string(), new_style);
+    }
+
     // ===== 事件管理 =====
 
     /// 添加事件监听器，返回监听器 ID

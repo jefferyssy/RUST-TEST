@@ -46,6 +46,7 @@ fn test_mock_render_tracks_count() {
     dl.push(PaintCommand::FillRect {
         rect: Rect::new(0.0, 0.0, 100.0, 100.0),
         color: Color::rgb(255, 0, 0),
+        radius: 0.0,
     });
     mock.render(&dl);
     assert_eq!(mock.render_count, 1);
@@ -67,6 +68,7 @@ fn test_mock_render_tracks_command_count() {
     dl.push(PaintCommand::FillRect {
         rect: Rect::new(10.0, 20.0, 50.0, 30.0),
         color: Color::BLACK,
+        radius: 0.0,
     });
     mock.render(&dl);
     assert_eq!(mock.last_command_count, 1);

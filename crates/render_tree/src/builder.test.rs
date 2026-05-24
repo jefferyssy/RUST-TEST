@@ -45,7 +45,7 @@ fn test_build_background() {
     let dl = builder.build(&root);
     assert_eq!(dl.len(), 1);
     match &dl.commands()[0] {
-        PaintCommand::FillRect { rect, color } => {
+        PaintCommand::FillRect { rect, color, .. } => {
             assert_eq!(rect.x, 10.0);
             assert_eq!(rect.y, 20.0);
             assert_eq!(rect.width, 200.0);
