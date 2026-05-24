@@ -41,3 +41,6 @@ coverage/
 # 发布包
 *.tar.gz
 *.zip
+
+# demo编译结果
+generated/
