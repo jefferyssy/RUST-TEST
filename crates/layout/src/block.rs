@@ -2,9 +2,10 @@
 //!
 //! 实现 W3C CSS 2.1 Block 布局规范的基础版本。
 //! 块级元素从上到下排列，每个元素占满可用宽度。
-//! Phase 0: 支持 text-align（left / center / right）对齐行内子元素。
+//! P1-10: BFC 基础 —— overflow != visible 的元素创建独立 BFC，
+//!   BFC 内 margin 不与外部折叠。
 
-use crate::layout_box::{BoxType, LayoutBox};
+use crate::layout_box::{BoxType, LayoutBox, Overflow};
 use dom::Size;
 use style::values::CSSValue;
 
@@ -13,11 +14,6 @@ pub struct BlockLayout;
 
 impl BlockLayout {
     /// 对 Block 容器执行布局
-    ///
-    /// container.children 按顺序从上到下排列
-    /// Block 子节点宽度 = container.content_area.width
-    /// Inline/InlineBlock/Text 子节点根据 text-align 水平对齐
-    /// 垂直收缩包裹：若容器未设置显式 height，则收缩到内容高度
     pub fn layout(&self, container: &mut LayoutBox, _viewport: Size<f32>) {
         let content_width = container.content_area().width;
         if content_width <= 0.0 {
@@ -26,6 +22,7 @@ impl BlockLayout {
 
         let mut current_y = container.rect.y;
         let mut prev_margin_bottom = 0.0f32;
+        let mut prev_was_bfc = false;
 
         let text_align = container
             .computed_style
@@ -37,8 +34,30 @@ impl BlockLayout {
             })
             .unwrap_or("left");
 
+        // P1-10: 容器自身是否创建 BFC
+        let container_is_bfc = is_bfc_container(container);
+
         for child in &mut container.children {
-            let collapsed_offset = Self::collapse_margins(prev_margin_bottom, child.margin.top);
+            // P1-10: BFC 子元素不与上一个兄弟折叠 margin
+            let child_is_bfc = is_bfc_container(child);
+            let collapsed_offset = if child_is_bfc && !prev_was_bfc {
+                // BFC 不与上一个非 BFC 兄弟折叠
+                child.margin.top
+            } else if !child_is_bfc && prev_was_bfc {
+                // 前一个 BFC 不与当前非 BFC 兄弟折叠
+                prev_margin_bottom + child.margin.top
+            } else {
+                Self::collapse_margins(prev_margin_bottom, child.margin.top)
+            };
+
+            // P1-10: BFC 容器内部 margin 不与外部折叠
+            // 当容器自身是 BFC 时，其首个子元素的 margin-top 和末个子元素的 margin-bottom
+            // 不与容器外部元素折叠
+            let top_offset = if container_is_bfc {
+                0.0
+            } else {
+                collapsed_offset
+            };
 
             child.rect.x = container.rect.x
                 + container.padding.left
@@ -51,7 +70,6 @@ impl BlockLayout {
                 }
                 BoxType::Inline | BoxType::InlineBlock | BoxType::Text
                 | BoxType::FlexItem | BoxType::GridItem => {
-                    // Shrink-to-fit: don't stretch, apply text-align
                     let available = content_width - child.rect.width;
                     match text_align {
                         "center" => child.rect.x += (available / 2.0).max(0.0),
@@ -62,14 +80,14 @@ impl BlockLayout {
                 _ => {}
             }
 
-            // 在放置子节点前加入外边距间隙
-            current_y += collapsed_offset;
+            current_y += top_offset;
             child.rect.y = current_y
                 + container.padding.top
                 + container.border.top;
 
             current_y += child.rect.height;
             prev_margin_bottom = child.margin.bottom;
+            prev_was_bfc = child_is_bfc;
         }
     }
 
@@ -85,7 +103,19 @@ impl BlockLayout {
     }
 }
 
-// Phase 2+: BFC, clear
+/// P1-10: 判断容器是否创建独立的 BFC（Block Formatting Context）
+///
+/// BFC 触发条件：
+/// - overflow != visible（hidden / scroll / auto）
+/// - display: flow-root（未来）
+/// - float != none（未来）
+/// - position: absolute / fixed（未来）
+pub fn is_bfc_container(node: &LayoutBox) -> bool {
+    if node.overflow != Overflow::Visible {
+        return true;
+    }
+    false
+}
 
 #[cfg(test)]
 #[path = "block.test.rs"]

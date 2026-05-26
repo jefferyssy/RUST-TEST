@@ -223,16 +223,21 @@ impl EventDispatcher {
     ) {
         let node_ref = node.borrow();
         if let super::NodeType::Element(elem) = &node_ref.node_type {
-            if let Some(listeners) = elem.events.get(&event.event_type) {
-                // 克隆监听器列表以避免借用冲突
-                let listeners: Vec<_> = listeners.iter().map(|l| l.id).collect();
-                for id in listeners {
+            let listener_ids: Vec<usize> = elem
+                .get_event_listeners(&event.event_type)
+                .iter()
+                .map(|l| l.id)
+                .collect();
+            if !listener_ids.is_empty() {
+                for id in listener_ids {
                     if event.immediate_propagation_stopped() {
                         break;
                     }
                     // 根据阶段过滤监听器
-                    if let Some(listener) = elem.events.get(&event.event_type)
-                        .and_then(|v| v.iter().find(|l| l.id == id))
+                    if let Some(listener) = elem
+                        .get_event_listeners(&event.event_type)
+                        .iter()
+                        .find(|l| l.id == id)
                     {
                         let should_fire = if capture_phase {
                             listener.options.capture

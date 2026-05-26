@@ -9,6 +9,7 @@ use taffy::{prelude::*, TaffyTree};
 
 use crate::layout_box::LayoutBox;
 use dom::Size;
+use style::ComputedStyle;
 use style::values::CSSValue;
 
 /// Flexbox 布局引擎
@@ -118,14 +119,28 @@ impl FlexLayout {
 
         // CSS 显式 width/height 覆盖
         if let Some(ref cs) = container.computed_style {
+            let is_border_box = is_border_box_style(cs);
             if let Some(w) = cs.get("width") {
                 if let Some(val) = resolve_length(w) {
-                    style.size.width = Dimension::Length(val);
+                    // taffy 的 size 是 content-box，border-box 需要减去 padding+border
+                    let content_w = if is_border_box {
+                        (val - container.padding.left - container.padding.right
+                         - container.border.left - container.border.right).max(0.0)
+                    } else {
+                        val
+                    };
+                    style.size.width = Dimension::Length(content_w);
                 }
             }
             if let Some(h) = cs.get("height") {
                 if let Some(val) = resolve_length(h) {
-                    style.size.height = Dimension::Length(val);
+                    let content_h = if is_border_box {
+                        (val - container.padding.top - container.padding.bottom
+                         - container.border.top - container.border.bottom).max(0.0)
+                    } else {
+                        val
+                    };
+                    style.size.height = Dimension::Length(content_h);
                 }
             }
         }
@@ -134,12 +149,21 @@ impl FlexLayout {
     }
 
     /// 子级样式：此时子级已完成自底向上布局，rect 为正确内容尺寸
+    ///
+    /// 关键：taffy 的 flex 分配以 content-box 为单位，gap 也在 content-box 之间。
+    /// 为避免 padding/border 从 content-box 向外溢出到 gap 区域造成重叠，
+    /// 子元素不向 taffy 报告 padding/border，让 taffy 直接以 border-box 作为
+    /// "content-box" 参与 flex 分配。写回时 layout.size 就是 border-box。
     fn convert_child_style(child: &LayoutBox, _viewport: Size<f32>) -> taffy::Style {
         let mut style = taffy::Style::default();
         Self::apply_common_style(&mut style, child);
         Self::apply_flex_properties(&mut style, child);
 
-        // 子级已通过预计算获得正确 rect，用作 min_size 防止塌陷
+        // 清除 padding/border —— 直接以 border-box 参与 taffy flex 分配
+        style.padding = taffy::Rect::zero();
+        style.border = taffy::Rect::zero();
+
+        // rect.width 已是 border-box，作为 min_size 防止塌陷
         if child.rect.width > 0.0 {
             style.min_size.width = taffy::Dimension::Length(child.rect.width);
         }
@@ -149,14 +173,30 @@ impl FlexLayout {
 
         // 显式 CSS width/height 覆盖
         if let Some(ref cs) = child.computed_style {
+            let is_border_box = is_border_box_style(cs);
             if let Some(w) = cs.get("width") {
                 if let Some(val) = resolve_length(w) {
-                    style.size.width = Dimension::Length(val);
+                    // 子元素不向 taffy 报告 padding/border，width 直接作为 taffy content-box
+                    // border-box: CSS width 即 border-box，content = width - padding - border
+                    // content-box: CSS width 即 content，border-box = width + padding + border
+                    let taffy_w = if is_border_box {
+                        val
+                    } else {
+                        val + child.padding.left + child.padding.right
+                            + child.border.left + child.border.right
+                    };
+                    style.size.width = Dimension::Length(taffy_w);
                 }
             }
             if let Some(h) = cs.get("height") {
                 if let Some(val) = resolve_length(h) {
-                    style.size.height = Dimension::Length(val);
+                    let taffy_h = if is_border_box {
+                        val
+                    } else {
+                        val + child.padding.top + child.padding.bottom
+                            + child.border.top + child.border.bottom
+                    };
+                    style.size.height = Dimension::Length(taffy_h);
                 }
             }
         }
@@ -328,6 +368,14 @@ fn css_number(value: &CSSValue) -> Option<f32> {
         CSSValue::Number(n) => Some(*n),
         CSSValue::Keyword(k) => k.parse::<f32>().ok(),
         _ => None,
+    }
+}
+
+/// 检查 ComputedStyle 是否使用 border-box 盒模型
+fn is_border_box_style(cs: &ComputedStyle) -> bool {
+    match cs.get("box-sizing") {
+        Some(CSSValue::Keyword(k)) => k == "border-box",
+        _ => false,
     }
 }
 

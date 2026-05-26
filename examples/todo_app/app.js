@@ -48,5 +48,5 @@ addBtn.addEventListener('click', function() {
 clearBtn.addEventListener('click', function() {
     todoCount = 0;
     updateCount();
-    list.textContent = "0";
+    list.textContent = "";
 });

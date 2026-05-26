@@ -264,6 +264,10 @@ pub fn match_css_to_elements(
             let id = el.attributes.get("id").map(|s| s.as_str());
 
             if selector_matches(&rule.selector, &el.tag, &classes, id, is_last_child_in_tree(el, elements)) {
+                // 后代选择器需要验证祖先部分是否匹配
+                if !check_descendant_ancestor(el, &rule.selector, elements) {
+                    continue;
+                }
                 for decl in &rule.declarations {
                     matched_decls.push(decl.clone());
                 }
@@ -283,6 +287,56 @@ pub fn match_css_to_elements(
             (var, style_str)
         })
         .collect()
+}
+
+/// 对于包含空格的后代选择器（如 `.todo-item span`），验证元素的祖先
+/// 是否匹配选择器的祖先部分。单层选择器直接返回 true。
+fn check_descendant_ancestor(
+    el: &super::HtmlElement,
+    selector: &str,
+    tree: &[super::HtmlElement],
+) -> bool {
+    let parts: Vec<&str> = selector.split_whitespace().collect();
+    if parts.len() <= 1 {
+        return true; // 不是后代选择器，无需检查
+    }
+
+    // 祖先选择器 = 除最后一部分之外的所有部分
+    let ancestor_sel = parts[..parts.len() - 1].join(" ");
+
+    // 在树中查找 el 的父元素，检查父元素是否匹配祖先选择器
+    find_and_check_ancestor(el, &ancestor_sel, tree)
+}
+
+/// 在树中递归搜索 el，找到其父元素后检查父元素是否匹配 ancestor_sel
+fn find_and_check_ancestor(
+    target: &super::HtmlElement,
+    ancestor_sel: &str,
+    siblings: &[super::HtmlElement],
+) -> bool {
+    for parent in siblings {
+        // 检查 target 是否为当前 parent 的直接子元素
+        for child in &parent.children {
+            if element_same(child, target) {
+                // 找到了！检查 parent 是否匹配祖先选择器
+                let classes: Vec<String> = parent.attributes.get("class")
+                    .map(|c| c.split_whitespace().map(String::from).collect())
+                    .unwrap_or_default();
+                let id = parent.attributes.get("id").map(|s| s.as_str());
+                return selector_matches(ancestor_sel, &parent.tag, &classes, id, false);
+            }
+        }
+        // 递归搜索更深层
+        if find_and_check_ancestor(target, ancestor_sel, &parent.children) {
+            return true;
+        }
+    }
+    false
+}
+
+/// 比较两个 HtmlElement 是否代表同一个元素（按 tag + id 属性）
+fn element_same(a: &super::HtmlElement, b: &super::HtmlElement) -> bool {
+    a.tag == b.tag && a.attributes.get("id") == b.attributes.get("id")
 }
 
 #[cfg(test)]

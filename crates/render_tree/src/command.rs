@@ -131,78 +131,109 @@ impl Default for ObjectFit {
 }
 
 /// 绘制命令列表 —— 按渲染顺序排列
-#[derive(Debug, Default)]
+///
+/// P0-6: 使用 DFS 桶排序替代 O(N log N) 全排序。
+/// 构建时按 z-order 层分桶，保证桶内 DFS 遍历序（即正确的 painter's order）。
+#[derive(Debug)]
 pub struct DisplayList {
-    pub(crate) commands: Vec<PaintCommand>,
+    /// z-order 桶：索引 0=BoxShadow, 1=FillRect, 2=Image, 3=Border, 4=Text, 5=Clip, 6=Opacity
+    buckets: [Vec<PaintCommand>; 7],
+    /// P1-9: 单调递增的版本号，用于渲染器检测 DL 变更
+    generation: u64,
+}
+
+impl Default for DisplayList {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DisplayList {
     /// 创建空 DisplayList
     pub fn new() -> Self {
-        Self { commands: Vec::new() }
+        const EMPTY_BUCKET: Vec<PaintCommand> = Vec::new();
+        Self {
+            buckets: [EMPTY_BUCKET; 7],
+            generation: 0,
+        }
     }
 
-    /// 添加绘制命令
+    /// P1-9: 获取 DisplayList 版本号
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// P1-9: 设置版本号（由 DisplayListBuilder 或 App 调用）
+    pub fn set_generation(&mut self, gen: u64) {
+        self.generation = gen;
+    }
+
+    /// P0-6: 按层添加绘制命令到对应桶
     pub fn push(&mut self, cmd: PaintCommand) {
-        self.commands.push(cmd);
+        let bucket = z_bucket(&cmd);
+        self.buckets[bucket].push(cmd);
     }
 
-    /// 按 z-order 排序
-    ///
-    /// 排序规则：
-    /// 1. FillRect（背景）最先
-    /// 2. Image → Border → Text（内容层）
-    /// 3. BoxShadow → Clip → Opacity（效果层）最后
+    /// P0-6: 按桶顺序合并，桶内保持 DFS 插入序
     pub fn sort_by_z_order(&mut self) {
-        self.commands.sort_by(|a, b| {
-            fn layer(cmd: &PaintCommand) -> i32 {
-                match cmd {
-                    PaintCommand::FillRect { .. } => 0,
-                    PaintCommand::Image { .. } => 1,
-                    PaintCommand::Border { .. } => 2,
-                    PaintCommand::Text { .. } => 3,
-                    PaintCommand::BoxShadow { .. } => -1,
-                    PaintCommand::Clip { .. } => 5,
-                    PaintCommand::Opacity { .. } => 6,
-                }
-            }
-            layer(a).cmp(&layer(b))
-        });
+        // 无需排序 — 桶内已按 DFS 序存储
+        let total: usize = self.buckets.iter().map(|b| b.len()).sum();
+        let mut merged = Vec::with_capacity(total);
+        // 合并顺序：BoxShadow(-1等效bucket0), FillRect, Image, Border, Text, Clip, Opacity
+        for bucket_idx in [0usize, 1, 2, 3, 4, 5, 6] {
+            merged.append(&mut self.buckets[bucket_idx]);
+        }
+        self.buckets[0] = merged;
     }
 
-    /// 获取命令列表
+    /// 获取排序后的命令列表（先调用 sort_by_z_order）
     pub fn commands(&self) -> &[PaintCommand] {
-        &self.commands
+        &self.buckets[0]
     }
 
-    /// 清空 DisplayList
-    pub fn clear(&mut self) {
-        self.commands.clear();
+    /// 可变的命令切片（用于渲染后端修改）
+    pub fn commands_mut(&mut self) -> &mut Vec<PaintCommand> {
+        &mut self.buckets[0]
     }
 
-    /// 命令数量
+    /// 获取命令总数（跨所有桶，无需 sort_by_z_order）
     pub fn len(&self) -> usize {
-        self.commands.len()
+        self.buckets.iter().map(|b| b.len()).sum()
     }
 
     /// 是否为空
     pub fn is_empty(&self) -> bool {
-        self.commands.is_empty()
+        self.buckets.iter().all(|b| b.is_empty())
     }
 
-    /// 移除最后一条命令（用于光标等临时绘制）
+    /// 移除最后一条命令（从 bucket 0，假设已 sort）
     pub fn pop(&mut self) -> Option<PaintCommand> {
-        self.commands.pop()
+        self.buckets[0].pop()
     }
 
-    /// 获取当前命令数量（用于快照）
-    pub fn command_count(&self) -> usize {
-        self.commands.len()
+    /// P0-6: 直接追加到渲染列表（跳过桶排序，用于临时命令如光标闪烁）
+    pub fn push_unsorted(&mut self, cmd: PaintCommand) {
+        self.buckets[0].push(cmd);
     }
 
-    /// 从指定索引开始排空命令，返回排空的命令列表
-    pub fn drain_from(&mut self, from: usize) -> Vec<PaintCommand> {
-        self.commands.drain(from..).collect()
+    /// 清空 DisplayList
+    pub fn clear(&mut self) {
+        for bucket in &mut self.buckets {
+            bucket.clear();
+        }
+    }
+}
+
+/// P0-6: 获取绘制命令的 z-order 桶索引
+fn z_bucket(cmd: &PaintCommand) -> usize {
+    match cmd {
+        PaintCommand::BoxShadow { .. } => 0, // 最底层：阴影
+        PaintCommand::FillRect { .. } => 1,  // 背景
+        PaintCommand::Image { .. } => 2,
+        PaintCommand::Border { .. } => 3,
+        PaintCommand::Text { .. } => 4,
+        PaintCommand::Clip { .. } => 5,
+        PaintCommand::Opacity { .. } => 6,   // 最顶层
     }
 }
 

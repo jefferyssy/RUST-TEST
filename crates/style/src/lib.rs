@@ -3,6 +3,8 @@
 //! 提供 CSS 解析、选择器匹配、级联计算功能。
 //! Phase 0 支持 ~30 个核心属性，Phase 3 扩展至 218+ API。
 
+pub mod property_id;
+pub mod computed;
 pub mod stylesheet;
 pub mod selector;
 pub mod cascade;
@@ -13,9 +15,12 @@ pub mod transitions;
 pub mod media;
 pub mod custom_props;
 
+pub use property_id::PropertyId;
+pub use computed::{ComputedStyle, StyleDiff, diff_styles};
+
 pub use stylesheet::{
     parse_stylesheet, parse_inline_style, parse_media_query, parse_keyframes, parse_font_face,
-    StyleSheet, Rule, Declaration,
+    StyleSheet, Rule, Declaration, SelectorIndex,
     MediaType, MediaFeature, MediaCondition, MediaQuery,
     KeyframeSelector, Keyframe, KeyframesRule, FontFaceRule,
     ImportRule, ImportError,
@@ -32,7 +37,11 @@ pub use selector::{
     compute_specificity_parsed,
     matches_complex_selector, create_pseudo_element_node,
 };
-pub use cascade::{compute_element_style, compute_element_style_with_node, ComputedStyle};
+pub use cascade::{
+    compute_element_style, compute_element_style_with_node,
+    compute_element_style_cached, compute_element_style_with_node_cached,
+    StyleCache, increment_style_version, current_style_version,
+};
 pub use values::{
     CSSValue, CSSUnit, parse_css_value, parse_color, parse_length,
     parse_transform, parse_calc_expression, parse_css_function,

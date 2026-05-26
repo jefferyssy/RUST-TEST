@@ -1321,10 +1321,12 @@ fn translate_event_body_inner(
                 rust_lines.push(format!("let current = {0}_ref.get_attribute(\"class\").unwrap_or_default();", var_name));
                 rust_lines.push(format!("if current.contains(\"{}\") {{", class_val));
                 rust_lines.push(format!("    {0}_ref.set_attribute(\"class\", &current.replace(\" {1}\", \"\").replace(\"{1}\", \"\"));", var_name, class_val));
-                rust_lines.push(format!("    {0}_ref.set_style(\"text-decoration: none; color: #333\");", var_name));
+                rust_lines.push(format!("    {0}_ref.set_style_property(\"text-decoration\", \"none\");", var_name));
+                rust_lines.push(format!("    {0}_ref.set_style_property(\"color\", \"#333\");", var_name));
                 rust_lines.push("} else {".to_string());
                 rust_lines.push(format!("    {0}_ref.set_attribute(\"class\", &format!(\"{{}} {1}\", current.trim()));", var_name, class_val));
-                rust_lines.push(format!("    {0}_ref.set_style(\"text-decoration: line-through; color: #999\");", var_name));
+                rust_lines.push(format!("    {0}_ref.set_style_property(\"text-decoration\", \"line-through\");", var_name));
+                rust_lines.push(format!("    {0}_ref.set_style_property(\"color\", \"#999\");", var_name));
                 rust_lines.push("}".to_string());
                 continue;
             }

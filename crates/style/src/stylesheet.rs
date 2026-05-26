@@ -26,6 +26,90 @@ pub struct StyleSheet {
     pub rules: Vec<Rule>,
     /// 来源 URL
     pub url: String,
+    /// P0-3: 选择器索引（按 tag/class/id 快速筛选候选规则）
+    pub selector_index: Option<SelectorIndex>,
+}
+
+/// P0-3: 选择器索引 —— 按 tag/class/id 分组，O(1) 候选规则筛选
+#[derive(Debug, Clone, Default)]
+pub struct SelectorIndex {
+    /// tag → 规则索引列表
+    pub by_tag: std::collections::HashMap<String, Vec<usize>>,
+    /// class → 规则索引列表
+    pub by_class: std::collections::HashMap<String, Vec<usize>>,
+    /// id → 规则索引列表
+    pub by_id: std::collections::HashMap<String, Vec<usize>>,
+    /// 通用规则（* 选择器或无 tag/class/id 的规则）—— 总是匹配
+    pub universal: Vec<usize>,
+}
+
+impl SelectorIndex {
+    /// 从规则列表构建索引
+    pub fn build(rules: &[Rule]) -> Self {
+        let mut index = Self::default();
+        for (i, rule) in rules.iter().enumerate() {
+            let mut has_specific = false;
+            for selector in &rule.selectors {
+                let parts: Vec<&str> = selector.split_whitespace().collect();
+                // 取最后一段（复合选择器的关键部分）
+                if let Some(last) = parts.last() {
+                    // 提取不含伪类的选择器体
+                    let body = last.split(':').next().unwrap_or(last);
+                    // 提取不含 #id 的部分
+                    if let Some(hash_pos) = body.find('#') {
+                        let id = &body[hash_pos + 1..];
+                        index.by_id.entry(id.to_string()).or_default().push(i);
+                        has_specific = true;
+                    }
+                    let no_id = body.find('#').map(|p| &body[..p]).unwrap_or(body);
+                    // 按 . 分割提取 tag 和 class
+                    for (j, part) in no_id.split('.').enumerate() {
+                        let part = part.trim();
+                        if part.is_empty() || part == "*" {
+                            continue;
+                        }
+                        if j == 0 {
+                            // 第一段是 tag
+                            index.by_tag.entry(part.to_string()).or_default().push(i);
+                            has_specific = true;
+                        } else {
+                            // 后续段是 class
+                            index.by_class.entry(part.to_string()).or_default().push(i);
+                            has_specific = true;
+                        }
+                    }
+                }
+            }
+            if !has_specific {
+                index.universal.push(i);
+            }
+        }
+        index
+    }
+
+    /// 根据元素信息查找候选规则索引
+    pub fn candidates(&self, tag: &str, classes: &[String], id: Option<&str>) -> Vec<usize> {
+        let mut set: std::collections::HashSet<usize> =
+            self.universal.iter().copied().collect();
+
+        if let Some(indices) = self.by_tag.get(tag) {
+            set.extend(indices);
+        }
+        for class in classes {
+            if let Some(indices) = self.by_class.get(class) {
+                set.extend(indices);
+            }
+        }
+        if let Some(id_val) = id {
+            if let Some(indices) = self.by_id.get(id_val) {
+                set.extend(indices);
+            }
+        }
+
+        let mut result: Vec<usize> = set.into_iter().collect();
+        result.sort_unstable();
+        result
+    }
 }
 
 impl StyleSheet {
@@ -34,7 +118,13 @@ impl StyleSheet {
         Self {
             rules: Vec::new(),
             url: url.to_string(),
+            selector_index: None,
         }
+    }
+
+    /// 构建选择器索引（在添加完规则后调用）
+    pub fn build_index(&mut self) {
+        self.selector_index = Some(SelectorIndex::build(&self.rules));
     }
 }
 

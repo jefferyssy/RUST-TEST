@@ -28,7 +28,7 @@ impl BatchOptimizer {
     pub fn optimize(list: &mut DisplayList) -> BatchStats {
         let original = list.len();
 
-        let mut commands = std::mem::take(&mut list.commands);
+        let mut commands = std::mem::take(list.commands_mut());
         let mut optimized: Vec<PaintCommand> = Vec::with_capacity(commands.len());
 
         let mut i = 0;
@@ -57,7 +57,7 @@ impl BatchOptimizer {
             draw_calls_saved: original.saturating_sub(optimized.len()),
         };
 
-        list.commands = optimized;
+        *list.commands_mut() = optimized;
         stats
     }
 
@@ -65,7 +65,7 @@ impl BatchOptimizer {
     pub fn occlusion_cull(list: &mut DisplayList) -> BatchStats {
         let original = list.len();
 
-        let commands = std::mem::take(&mut list.commands);
+        let commands = std::mem::take(list.commands_mut());
         let mut result = Vec::new();
         let mut opaque_regions: Vec<(f32, f32, f32, f32)> = Vec::new(); // (x, y, right, bottom)
 
@@ -96,7 +96,7 @@ impl BatchOptimizer {
             draw_calls_saved: original.saturating_sub(result.len()),
         };
 
-        list.commands = result;
+        *list.commands_mut() = result;
         stats
     }
 }
@@ -117,7 +117,12 @@ mod tests {
     }
 
     fn make_list(cmds: Vec<PaintCommand>) -> DisplayList {
-        DisplayList { commands: cmds }
+        let mut list = DisplayList::new();
+        for cmd in cmds {
+            list.push(cmd);
+        }
+        list.sort_by_z_order();
+        list
     }
 
     #[test]
@@ -130,7 +135,7 @@ mod tests {
         let stats = BatchOptimizer::optimize(&mut list);
         assert_eq!(stats.original_count, 3);
         assert_eq!(stats.optimized_count, 3); // same count, just doesn't discard
-        assert_eq!(list.commands.len(), 3);
+        assert_eq!(list.commands().len(), 3);
     }
 
     #[test]

@@ -12,7 +12,8 @@ pub struct ElementData {
     pub(crate) attributes: HashMap<String, String>,
     pub(crate) class_list: Vec<String>,
     pub(crate) style: HashMap<String, String>,
-    pub(crate) events: HashMap<String, Vec<EventListener>>,
+    /// P0-2: 惰性初始化，仅添加事件监听器时才分配 HashMap
+    pub(crate) events: Option<HashMap<String, Vec<EventListener>>>,
     pub(crate) id: Option<String>,
     /// Phase 1: 元素是否获得焦点
     pub(crate) focused: bool,
@@ -26,7 +27,7 @@ impl ElementData {
             attributes: HashMap::new(),
             class_list: Vec::new(),
             style: HashMap::new(),
-            events: HashMap::new(),
+            events: None,
             id: None,
             focused: false,
         }
@@ -178,13 +179,26 @@ impl ElementData {
 
     // ===== 事件管理 =====
 
+    /// P1-10: 判断是否为被动事件类型（默认 passive=true 用于滚动性能优化）
+    fn default_passive(event_type: &str) -> bool {
+        matches!(event_type,
+            "scroll" | "touchstart" | "touchmove" | "touchend"
+            | "wheel" | "mousewheel" | "pointermove"
+        )
+    }
+
     /// 添加事件监听器，返回监听器 ID
     pub fn add_event_listener(
         &mut self,
         event_type: &str,
         callback: Box<dyn Fn(&Event)>,
     ) -> usize {
-        self.add_event_listener_with_options(event_type, callback, EventListenerOptions::default())
+        let mut options = EventListenerOptions::default();
+        // P1-10: 为滚动/触摸/滚轮事件默认启用 passive
+        if Self::default_passive(event_type) {
+            options.passive = true;
+        }
+        self.add_event_listener_with_options(event_type, callback, options)
     }
 
     /// 添加事件监听器（带选项），返回监听器 ID
@@ -196,24 +210,32 @@ impl ElementData {
     ) -> usize {
         let id = super::event::next_listener_id();
         let listener = EventListener { callback, id, options };
-        self.events.entry(event_type.to_string()).or_default().push(listener);
+        self.events
+            .get_or_insert_with(HashMap::new)
+            .entry(event_type.to_string())
+            .or_default()
+            .push(listener);
         id
     }
 
     /// 移除事件监听器
     pub fn remove_event_listener(&mut self, event_type: &str, id: usize) {
-        if let Some(listeners) = self.events.get_mut(event_type) {
-            listeners.retain(|l| l.id != id);
+        if let Some(ref mut events) = self.events {
+            if let Some(listeners) = events.get_mut(event_type) {
+                listeners.retain(|l| l.id != id);
+            }
         }
     }
 
     /// 派发事件
     pub fn dispatch_event(&mut self, event: &Event) -> bool {
-        if let Some(listeners) = self.events.get(&event.event_type) {
-            for listener in listeners {
-                (listener.callback)(event);
-                if event.propagation_stopped() {
-                    break;
+        if let Some(ref events) = self.events {
+            if let Some(listeners) = events.get(&event.event_type) {
+                for listener in listeners {
+                    (listener.callback)(event);
+                    if event.propagation_stopped() {
+                        break;
+                    }
                 }
             }
         }
@@ -222,7 +244,11 @@ impl ElementData {
 
     /// 获取指定类型的事件监听器列表
     pub fn get_event_listeners(&self, event_type: &str) -> &[EventListener] {
-        self.events.get(event_type).map(|v| v.as_slice()).unwrap_or(&[])
+        self.events
+            .as_ref()
+            .and_then(|e| e.get(event_type))
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 
     // ===== 固有属性 =====

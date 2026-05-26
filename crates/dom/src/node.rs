@@ -54,6 +54,8 @@ pub struct Node {
     next_sibling: Option<Rc<RefCell<Node>>>,
     /// 变更标记 —— 节点修改时通知 layout 引擎重排
     pub(crate) dirty: Cell<bool>,
+    /// P0-1: 子树中是否有脏节点（父节点可快速跳过干净子树）
+    pub(crate) has_dirty_child: Cell<bool>,
     /// 指向自身的 Weak 指针 —— 使节点方法能获取自身 Rc
     weak_self: Weak<RefCell<Node>>,
 }
@@ -72,6 +74,7 @@ impl Node {
             prev_sibling: None,
             next_sibling: None,
             dirty: Cell::new(false),
+            has_dirty_child: Cell::new(false),
             weak_self: weak.clone(),
         }))
     }
@@ -293,6 +296,42 @@ impl Node {
         self.mark_dirty(true);
     }
 
+    /// 原地更新文本内容（不替换 Text 节点 Rc，保持布局树引用有效）
+    ///
+    /// 若首个子节点是 Text 则原地修改其 data，否则回退到 set_text_content。
+    /// 在 Text 子节点上标记 dirty（而非元素自身），使增量管线能识别纯文本变更。
+    pub fn update_text_content(&mut self, text: &str) {
+        if let Some(first) = self.children.first() {
+            let is_text = matches!(first.borrow().node_type, NodeType::Text(_));
+            if is_text {
+                {
+                    let mut child = first.borrow_mut();
+                    if let NodeType::Text(ref mut t) = child.node_type {
+                        t.set_data(text);
+                    }
+                    child.dirty.set(true);
+                }
+                // 从 self 向上传播 has_dirty_child（不能通过 child.mark_dirty，
+                // 因为 child 的 parent 就是 self，而 self 已被 &mut 借用）
+                self.has_dirty_child.set(true);
+                let mut current = self.parent.clone().and_then(|w| w.upgrade());
+                while let Some(p) = current {
+                    {
+                        let p_ref = p.borrow();
+                        if p_ref.has_dirty_child.get() {
+                            break;
+                        }
+                    }
+                    p.borrow().has_dirty_child.set(true);
+                    current = p.borrow().parent.clone().and_then(|w| w.upgrade());
+                }
+                return;
+            }
+        }
+        // 回退：没有 Text 子节点时新建（标记元素自身 dirty → 触发全量重建）
+        self.set_text_content(text);
+    }
+
     /// 父节点
     pub fn parent_node(&self) -> Option<Rc<RefCell<Node>>> {
         self.parent.as_ref().and_then(|w| w.upgrade())
@@ -499,14 +538,79 @@ impl Node {
         crate::Rect::new(0.0, 0.0, 0.0, 0.0)
     }
 
-    /// 标记节点为脏（需要重排）
+    /// 标记节点为脏，并沿祖先链向上传播（P0-1: 增量布局支持）
     pub(crate) fn mark_dirty(&self, dirty: bool) {
         self.dirty.set(dirty);
+        if dirty {
+            // 向上传播 has_dirty_child 标记
+            let mut current = self.parent.clone()
+                .and_then(|w| w.upgrade());
+            while let Some(parent) = current {
+                {
+                    let p_ref = parent.borrow();
+                    if p_ref.has_dirty_child.get() {
+                        break; // 祖先已标记，停止传播
+                    }
+                }
+                parent.borrow().has_dirty_child.set(true);
+                current = parent.borrow().parent.clone()
+                    .and_then(|w| w.upgrade());
+            }
+        }
     }
 
     /// 是否脏节点
     pub(crate) fn is_dirty(&self) -> bool {
         self.dirty.get()
+    }
+
+    /// P0-1: 清除自身及子树的全部 dirty 标记
+    pub fn clear_dirty(&self) {
+        self.dirty.set(false);
+        self.has_dirty_child.set(false);
+        for child in &self.children {
+            child.borrow().clear_dirty();
+        }
+    }
+
+    /// P0-1: 子树中是否有任何脏节点
+    pub fn has_any_dirty(&self) -> bool {
+        self.dirty.get() || self.has_dirty_child.get()
+    }
+
+    /// P0-1: 脏子树是否仅含文本内容变更（无元素属性/结构变更）
+    ///
+    /// 用于增量管线判断：纯文本变更可跳过布局重算，结构变更需全量重建。
+    pub fn is_text_only_change(&self) -> bool {
+        if !self.dirty.get() && !self.has_dirty_child.get() {
+            return true; // 子树干净
+        }
+        match &self.node_type {
+            NodeType::Text(_) => true, // 文本 dirty = 内容变更，可增量
+            NodeType::Element(_) => {
+                if self.dirty.get() {
+                    return false; // 元素自身 dirty = 属性/样式/结构变更
+                }
+                if self.has_dirty_child.get() {
+                    for child in &self.children {
+                        if !child.borrow().is_text_only_change() {
+                            return false;
+                        }
+                    }
+                }
+                true
+            }
+            NodeType::Document | NodeType::DocumentFragment | NodeType::Comment(_) => {
+                if self.has_dirty_child.get() {
+                    for child in &self.children {
+                        if !child.borrow().is_text_only_change() {
+                            return false;
+                        }
+                    }
+                }
+                true
+            }
+        }
     }
 
     // ============================================================

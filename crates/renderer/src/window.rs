@@ -15,10 +15,10 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::fmt::Write;
 use std::rc::Rc;
 
-use style::cascade::{compute_element_style, ComputedStyle};
+use style::ComputedStyle;
+use style::cascade::compute_element_style;
 use style::selector::SelectorEngine;
 use style::stylesheet::StyleSheet;
 use dom::event::MouseEvent;
@@ -41,11 +41,6 @@ use winit::window::{Window, WindowAttributes};
 
 use crate::event_loop::AnimationFrameScheduler;
 use crate::hit_test::HitTester;
-
-/// 递归统计布局树节点数（诊断用）
-fn count_nodes(root: &LayoutBox) -> usize {
-    1 + root.children.iter().map(count_nodes).sum::<usize>()
-}
 
 /// WebWindow —— 应用主入口
 ///
@@ -140,14 +135,8 @@ impl WebWindow {
         // 4. 构建 DisplayList
         let mut builder = DisplayListBuilder::new();
         let display_list = builder.build(&layout_root);
-        eprintln!("[diag] DisplayList commands: {}", display_list.commands().len());
-        eprintln!("[diag] Layout tree node count: {}", count_nodes(&layout_root));
-        eprintln!("[diag] Computed styles count: {}", styles.len());
 
-        // 输出调试文件
-        dump_render_debug(&dom_root, &body, &styles, &layout_root, &display_list, size);
-
-        // 5. 启动窗口并渲染
+        // 启动窗口并渲染
         let layout_engine = std::mem::replace(&mut self.layout_engine, LayoutEngine::new());
         let animation_scheduler = std::mem::replace(
             &mut self.animation_scheduler,
@@ -244,7 +233,7 @@ impl ApplicationHandler for App {
                             if let Some(layout_root) = self.layout_root.as_ref() {
                                 if let Some(cursor_rect) = Self::find_layout_rect(layout_root, focused) {
                                     // 光标：2px 宽，使用蓝色可见
-                                    list.push(PaintCommand::FillRect {
+                                    list.push_unsorted(PaintCommand::FillRect {
                                         rect: Rect::new(
                                             cursor_rect.x + 4.0,
                                             cursor_rect.y + 4.0,
@@ -305,6 +294,7 @@ impl ApplicationHandler for App {
         }
     }
 }
+
 
 impl App {
     /// 处理鼠标点击事件：Hit Test → 派发 DOM 事件 → 重建渲染管线
@@ -375,8 +365,8 @@ impl App {
                     let mut chars: Vec<char> = current.chars().collect();
                     chars.pop();
                     let new_text: String = chars.into_iter().collect();
-                    // 删除旧的文本子节点，创建新的
-                    node.set_text_content(&new_text);
+                    // P0-1: 原地更新文本节点，保持 Rc 不变 → 布局树引用仍有效
+                    node.update_text_content(&new_text);
                 }
             }
             Key::Named(NamedKey::Enter) => {
@@ -388,14 +378,14 @@ impl App {
                     if !t.is_empty() && !t.chars().any(|c| c.is_control()) {
                         let current = node.text_content();
                         let new_text = format!("{}{}", current, t);
-                        node.set_text_content(&new_text);
+                        node.update_text_content(&new_text);
                     }
                 }
             }
         }
         drop(node);
 
-        // 重建渲染管线以反映文本变更
+        // 增量渲染管线以反映文本变更
         self.relayout();
     }
 
@@ -415,6 +405,10 @@ impl App {
     }
 
     /// 重建布局和 DisplayList（窗口 resize 或 DOM 变更后调用）
+    ///
+    /// P0-1 增量管线：
+    /// - 纯文本变更（输入框键入）：跳过样式重算和布局，仅重建 DisplayList
+    /// - 结构变更（增删元素、属性变更）：全量重建
     fn relayout(&mut self) {
         let size = if let Some(ref window) = self.window {
             let inner = window.inner_size();
@@ -427,19 +421,48 @@ impl App {
         };
 
         let viewport = dom::Size::new(size.0 as f32, size.1 as f32);
+        let size_changed = self.size != size;
         self.size = size;
         self.viewport = viewport;
 
         let doc_ref = self.document.borrow();
-        let dom_root = doc_ref.document_element();
         let body = doc_ref.body();
 
-        // 重新计算样式（DOM 可能已变更，文本节点被替换为新 Rc 指针）
+        let body_dirty = body.borrow().has_any_dirty();
+
+        // 没有任何变更且布局树已存在 → 直接返回
+        if !size_changed && !body_dirty && self.layout_root.is_some() {
+            return;
+        }
+
+        // ── 增量路径：纯文本变更 ──
+        // 条件：尺寸未变 + 存在布局树 + 脏节点全部是文本内容变更（无结构变更）
+        if !size_changed && body_dirty && self.layout_root.is_some() {
+            if body.borrow().is_text_only_change() {
+                body.borrow().clear_dirty();
+                drop(doc_ref);
+
+                // 仅从现有布局树重建 DisplayList（读取最新的 DOM 文本内容）
+                if let Some(ref layout_root) = self.layout_root {
+                    let mut builder = DisplayListBuilder::new();
+                    let new_dl = builder.build(layout_root);
+                    self.display_list = Some(new_dl);
+                }
+                return;
+            }
+        }
+
+        // ── 全量路径：结构变更或尺寸变更 ──
+        let dom_root = doc_ref.document_element();
+
         let mut styles: HashMap<usize, ComputedStyle> = HashMap::new();
         compute_dom_styles(&dom_root, &[], None, &mut styles);
 
         let mut new_root = build_layout_tree(&body, &styles, Some(&mut self.layout_engine.text_measurer));
         self.layout_engine.layout(&mut new_root, viewport);
+
+        body.borrow().clear_dirty();
+
         drop(doc_ref);
 
         let mut builder = DisplayListBuilder::new();
@@ -489,8 +512,8 @@ fn compute_dom_styles(
                 let ptr = Rc::as_ptr(node) as usize;
                 let mut inherited = ComputedStyle::new();
                 for prop in &["color", "font-size", "font-family", "font-weight", "font-style", "text-align"] {
-                    if let Some(val) = ps.properties.get(*prop) {
-                        inherited.properties.insert(prop.to_string(), val.clone());
+                    if let Some(val) = ps.get(*prop) {
+                        inherited.set(prop, val.clone());
                     }
                 }
                 out.insert(ptr, inherited);
@@ -506,116 +529,3 @@ fn compute_dom_styles(
     }
 }
 
-/// 输出渲染管线调试信息到文件
-fn dump_render_debug(
-    dom_root: &Rc<RefCell<Node>>,
-    body: &Rc<RefCell<Node>>,
-    styles: &HashMap<usize, ComputedStyle>,
-    layout_root: &LayoutBox,
-    display_list: &DisplayList,
-    window_size: (u32, u32),
-) {
-    let mut out = String::new();
-    let _ = writeln!(out, "========== 渲染管线调试输出 ==========");
-    let _ = writeln!(out, "窗口尺寸: {}x{}", window_size.0, window_size.1);
-
-    // === DOM 树 ===
-    let _ = writeln!(out, "\n========== DOM 树 ==========");
-    dump_dom_node(dom_root, 0, &mut out);
-
-    // === body 子树 ===
-    let _ = writeln!(out, "\n========== body 子树 ==========");
-    dump_dom_node(body, 0, &mut out);
-
-    // === 各节点计算样式 ===
-    let _ = writeln!(out, "\n========== 计算样式 (ComputedStyle) ==========");
-    for (ptr, style) in styles {
-        let _ = writeln!(out, "  [0x{:x}]", ptr);
-        for (prop, val) in &style.properties {
-            let _ = writeln!(out, "    {}: {:?}", prop, val);
-        }
-    }
-
-    // === 布局树 ===
-    let _ = writeln!(out, "\n========== 布局树 (LayoutBox) ==========");
-    dump_layout_node(layout_root, 0, &mut out);
-
-    // === DisplayList ===
-    let _ = writeln!(out, "\n========== DisplayList ({} 条命令) ==========", display_list.commands().len());
-    for (i, cmd) in display_list.commands().iter().enumerate() {
-        let _ = writeln!(out, "  [{}] {:?}", i, cmd);
-    }
-
-    let path = std::path::Path::new("target").join("render_tree_debug.txt");
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if let Err(e) = std::fs::write(&path, &out) {
-        eprintln!("[diag] 写入调试文件失败: {}\n{}", e, out);
-    } else {
-        eprintln!("[diag] 调试文件已写入: {}", path.display());
-    }
-}
-
-/// 递归输出 DOM 节点
-fn dump_dom_node(node: &Rc<RefCell<Node>>, depth: usize, out: &mut String) {
-    let n = node.borrow();
-    let indent = "  ".repeat(depth);
-    match &n.node_type {
-        NodeType::Element(elem) => {
-            let _ = writeln!(out, "{}<{}> id={:?} class={:?} style={:?}",
-                indent, elem.tag_name(),
-                elem.get_attribute("id"),
-                elem.get_attribute("class"),
-                elem.get_attribute("style"));
-        }
-        NodeType::Text(_) => {
-            let _ = writeln!(out, "{}\"{}\"", indent, n.text_content());
-        }
-        NodeType::Document => {
-            let _ = writeln!(out, "{}[Document]", indent);
-        }
-        NodeType::DocumentFragment => {
-            let _ = writeln!(out, "{}[DocumentFragment]", indent);
-        }
-        NodeType::Comment(s) => {
-            let _ = writeln!(out, "{}<!-- {} -->", indent, s);
-        }
-    }
-    let children = n.child_nodes();
-    drop(n);
-    for child in &children {
-        dump_dom_node(child, depth + 1, out);
-    }
-}
-
-/// 递归输出布局节点
-fn dump_layout_node(node: &LayoutBox, depth: usize, out: &mut String) {
-    let indent = "  ".repeat(depth);
-    let _ = writeln!(out, "{}{:?} rect=({:.0}, {:.0}, {:.0}x{:.0}) pad=({:.0},{:.0},{:.0},{:.0}) margin=({:.0},{:.0},{:.0},{:.0})",
-        indent,
-        node.box_type,
-        node.rect.x, node.rect.y, node.rect.width, node.rect.height,
-        node.padding.top, node.padding.right, node.padding.bottom, node.padding.left,
-        node.margin.top, node.margin.right, node.margin.bottom, node.margin.left,
-    );
-    if let Some(ref dom_node) = node.node {
-        if let NodeType::Text(_) = &dom_node.borrow().node_type {
-            let _ = writeln!(out, "{}  text=\"{}\"", indent, dom_node.borrow().text_content());
-        }
-    }
-    if let Some(ref cs) = node.computed_style {
-        if let Some(fs) = cs.get("font-size") {
-            let _ = writeln!(out, "{}  font-size={:?}", indent, fs);
-        }
-        if let Some(c) = cs.get("color") {
-            let _ = writeln!(out, "{}  color={:?}", indent, c);
-        }
-        if let Some(bg) = cs.get("background") {
-            let _ = writeln!(out, "{}  background={:?}", indent, bg);
-        }
-    }
-    for child in &node.children {
-        dump_layout_node(child, depth + 1, out);
-    }
-}

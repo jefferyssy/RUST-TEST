@@ -8,7 +8,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use style::cascade::ComputedStyle;
+use style::ComputedStyle;
 use dom::{Node, Rect, Size};
 
 /// 布局框类型 —— 参与布局计算的基本单元

@@ -320,6 +320,14 @@ pub struct WgpuBackend {
     clip_stack: Vec<dom::Rect<f32>>,
     /// 透明度栈（嵌套 opacity 值）
     opacity_stack: Vec<f32>,
+    /// P1-9: 上次写入的实例数（用于增量 buffer 写入）
+    last_rect_count: usize,
+    last_border_count: usize,
+    last_shadow_count: usize,
+    last_text_count: usize,
+    last_screen_size: (u32, u32),
+    /// P1-9: DisplayList 版本号追踪（检测 DL 是否发生变更）
+    last_dl_generation: u64,
 }
 
 impl WgpuBackend {
@@ -866,6 +874,12 @@ impl WgpuBackend {
             image_pipeline: None,
             clip_stack: Vec::new(),
             opacity_stack: Vec::new(),
+            last_rect_count: 0,
+            last_border_count: 0,
+            last_shadow_count: 0,
+            last_text_count: 0,
+            last_screen_size: (0, 0),
+            last_dl_generation: 0,
         }
     }
 
@@ -951,42 +965,59 @@ impl RenderBackend for WgpuBackend {
             self.ensure_text_instance_capacity(text_count);
         }
 
-        // 4. 写入实例数据 + 屏幕 uniform
-        if rect_count > 0 {
+        // 4. P1-9: 增量写入实例数据
+        // 使用 display_list.generation() 检测 DL 是否变更
+        let dl_gen = display_list.generation();
+        let gen_changed = dl_gen != self.last_dl_generation;
+        let write_rect = rect_count > 0 && (gen_changed || rect_count != self.last_rect_count);
+        if write_rect {
             self.queue.write_buffer(
                 &self.instance_buf,
                 0,
                 bytemuck::cast_slice(&rect_instances),
             );
+            self.last_rect_count = rect_count;
         }
-        if border_count > 0 {
+        let write_border = border_count > 0 && (gen_changed || border_count != self.last_border_count);
+        if write_border {
             self.queue.write_buffer(
                 &self.border_instance_buf,
                 0,
                 bytemuck::cast_slice(&border_instances),
             );
+            self.last_border_count = border_count;
         }
-        if shadow_count > 0 {
+        let write_shadow = shadow_count > 0 && (gen_changed || shadow_count != self.last_shadow_count);
+        if write_shadow {
             self.queue.write_buffer(
                 &self.shadow_instance_buf,
                 0,
                 bytemuck::cast_slice(&shadow_instances),
             );
+            self.last_shadow_count = shadow_count;
         }
-        if text_count > 0 {
+        let write_text = text_count > 0 && (gen_changed || text_count != self.last_text_count);
+        if write_text {
             self.queue.write_buffer(
                 &self.text_instance_buf,
                 0,
                 bytemuck::cast_slice(&text_instances),
             );
+            self.last_text_count = text_count;
         }
-        let screen_w = self.logical_size.0 as f32;
-        let screen_h = self.logical_size.1 as f32;
-        self.queue.write_buffer(
-            &self.screen_uniform_buf,
-            0,
-            bytemuck::cast_slice(&[screen_w, screen_h]),
-        );
+        self.last_dl_generation = dl_gen;
+        // P1-9: 仅当屏幕尺寸变化时更新 uniform
+        let screen_size = self.logical_size;
+        if screen_size != self.last_screen_size {
+            let screen_w = screen_size.0 as f32;
+            let screen_h = screen_size.1 as f32;
+            self.queue.write_buffer(
+                &self.screen_uniform_buf,
+                0,
+                bytemuck::cast_slice(&[screen_w, screen_h]),
+            );
+            self.last_screen_size = screen_size;
+        }
 
         // 5. 获取 surface 纹理
         let output = match self.surface.get_current_texture() {

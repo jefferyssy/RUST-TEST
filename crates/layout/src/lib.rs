@@ -14,6 +14,7 @@ pub mod inline;
 pub mod table;
 pub mod grid;
 pub mod float;
+pub mod constraint;
 
 pub use layout_box::{LayoutBox, BoxType, EdgeSizes, Overflow, BorderRadius, Visibility};
 pub use flex::FlexLayout;
@@ -24,12 +25,13 @@ pub use inline::InlineLayout;
 pub use table::TableLayout;
 pub use grid::GridLayout;
 pub use float::{FloatLayout, FloatDirection, ClearMode};
+pub use constraint::ConstraintSpace;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use style::cascade::ComputedStyle;
+use style::ComputedStyle;
 use dom::{Node, NodeType, Size};
 
 /// 布局引擎 —— 负责计算每个节点的位置和尺寸
@@ -66,8 +68,9 @@ impl LayoutEngine {
         // Phase 0: 设置根节点宽度为视口宽度（块级元素默认行为）
         root.rect.width = viewport.width;
 
-        // 递归计算所有节点尺寸（内部容器会收缩包裹内容高度）
-        self.calculate_sizes(root, viewport, None);
+        // P1-8: 使用 ConstraintSpace 传递约束
+        let root_constraint = ConstraintSpace::from_viewport(viewport);
+        self.calculate_sizes(root, root_constraint, None);
 
         // 根节点高度：若内容不足视口则撑满，若内容溢出则跟随内容
         // 这样 body 背景能覆盖整个窗口，类似 Chrome 行为
@@ -80,18 +83,20 @@ impl LayoutEngine {
         positioned.layout(root, viewport);
     }
 
-    /// 递归计算尺寸
-    fn calculate_sizes(&mut self, node: &mut LayoutBox, viewport: Size<f32>, parent_box_type: Option<BoxType>) {
+    /// 递归计算尺寸（使用 ConstraintSpace）
+    fn calculate_sizes(&mut self, node: &mut LayoutBox, constraint: ConstraintSpace, parent_box_type: Option<BoxType>) {
+        // P1-8: 从约束空间提取视口尺寸
+        let viewport = Size::new(
+            constraint.constrained_width(),
+            constraint.constrained_height(),
+        );
+
         // 根据布局类型分发
         let box_type = node.box_type.clone();
         match box_type {
             BoxType::FlexContainer => {
-                // Phase 0: 自底向上先计算子级尺寸（嵌套 flex 容器需先确定内容尺寸）
-                // 这样 taffy 才能用正确的子级尺寸进行 space-between / align-items 计算
-                self.calculate_sizes_children(node, viewport);
+                self.calculate_sizes_children(node, constraint);
                 let mut flex = FlexLayout;
-                // 仅当父级为 Block 时容器宽度可信赖（由 BlockLayout 设定）
-                // 父级为 Flex/Grid 时，构建阶段宽度估计使用 Block 规则（max），不适用于 Flex
                 let constrain_width = parent_box_type.as_ref().map_or(true, |pt| {
                     matches!(pt, BoxType::Block | BoxType::Anonymous)
                 });
@@ -105,36 +110,30 @@ impl LayoutEngine {
                 // 文本节点的尺寸由父节点决定
             }
             BoxType::FlexItem => {
-                // FlexItem 的尺寸由 FlexLayout 处理
-                self.calculate_sizes_children(node, viewport);
+                self.calculate_sizes_children(node, constraint);
                 return;
             }
             BoxType::Inline => {
                 let block = BlockLayout;
                 block.layout(node, viewport);
             }
-            // Phase 1: 新布局类型
             BoxType::InlineBlock => {
                 let block = BlockLayout;
                 block.layout(node, viewport);
             }
             BoxType::Table => {
-                // Phase 1: 表格布局暂委托给 BlockLayout
                 let block = BlockLayout;
                 block.layout(node, viewport);
             }
             BoxType::TableRow | BoxType::TableCell => {
-                // 表格行/单元格由 Table 容器处理
-                self.calculate_sizes_children(node, viewport);
+                self.calculate_sizes_children(node, constraint);
                 return;
             }
             BoxType::Absolute | BoxType::Fixed => {
-                // 定位元素在 PositionedLayout 中处理
                 let block = BlockLayout;
                 block.layout(node, viewport);
             }
             BoxType::Sticky => {
-                // Phase 1: sticky 暂按 relative 处理
                 let block = BlockLayout;
                 block.layout(node, viewport);
             }
@@ -143,12 +142,10 @@ impl LayoutEngine {
                 grid.layout(node, viewport);
             }
             BoxType::GridItem => {
-                // GridItem 尺寸由 Grid 容器决定
-                self.calculate_sizes_children(node, viewport);
+                self.calculate_sizes_children(node, constraint);
                 return;
             }
             BoxType::Float => {
-                // Float 元素尺寸先按 Block 计算
                 let block = BlockLayout;
                 block.layout(node, viewport);
             }
@@ -158,16 +155,12 @@ impl LayoutEngine {
         self.apply_aspect_ratio(node);
 
         // 递归处理子节点（子节点高度在此确定）
-        self.calculate_sizes_children(node, viewport);
-
-        // 子节点布局完成后，收缩包裹当前节点的高度
-        self.shrink_to_content(node);
+        self.calculate_sizes_children(node, constraint);
 
         // 子节点布局完成后，Block 容器内兄弟节点的高度可能已改变，
         // 必须重跑 BlockLayout 以确保所有兄弟节点位置正确。
         // 典型场景：空 #todo-list 初始高度 0，子 li 布局后高度增长，
-        // 其后的 footer 需要向下推移。仅检查容器自身高度变化不够，
-        // 因为 shrink_to_content 基于的是旧的兄弟节点 rect.y。
+        // 其后的 footer 需要向下推移。
         match box_type {
             BoxType::Block | BoxType::Anonymous | BoxType::Inline | BoxType::InlineBlock => {
                 let block = BlockLayout;
@@ -175,10 +168,17 @@ impl LayoutEngine {
             }
             _ => {}
         }
+
+        // 在 BlockLayout 重新定位子节点后，收缩包裹当前节点的高度。
+        // 必须在 BlockLayout 之后调用，因为 FlexContainer 子节点的初始高度
+        // 可能在 build_layout_box 时为 0，导致首次 BlockLayout 将所有子节点
+        // 堆积在同一 Y 坐标。第二次 BlockLayout 修正 Y 坐标后，shrink_to_content
+        // 才能正确计算子节点的相对位置和容器高度。
+        self.shrink_to_content(node);
     }
 
     /// 递归处理所有子节点的尺寸
-    fn calculate_sizes_children(&mut self, node: &mut LayoutBox, viewport: Size<f32>) {
+    fn calculate_sizes_children(&mut self, node: &mut LayoutBox, constraint: ConstraintSpace) {
         let parent_content_width = node.content_area().width;
         // Flex/Grid 容器内子元素尺寸由 taffy/grid 决定，不强制拉伸
         let skip_stretch = matches!(
@@ -237,8 +237,8 @@ impl LayoutEngine {
                 }
             }
 
-            let child_viewport = Size::new(viewport.width - node.rect.x, viewport.height - node.rect.y);
-            self.calculate_sizes(&mut node.children[i], child_viewport, Some(node.box_type.clone()));
+            let child_constraint = constraint.for_child();
+            self.calculate_sizes(&mut node.children[i], child_constraint, Some(node.box_type.clone()));
         }
     }
 
@@ -340,22 +340,23 @@ impl LayoutEngine {
 
     // Phase 1: 局部重排
     pub fn partial_layout(&mut self, root: &mut LayoutBox, dirty_nodes: &[Rc<RefCell<Node>>], viewport: Size<f32>) {
+        let constraint = ConstraintSpace::from_viewport(viewport);
         for dirty in dirty_nodes {
             if let Some(layout_node) = root.find_layout_node(dirty) {
                 let idx = layout_node as *const LayoutBox as usize;
-                self.relayout_node(root, idx, viewport, None);
+                self.relayout_node(root, idx, constraint, None);
             }
         }
     }
 
-    fn relayout_node(&mut self, root: &mut LayoutBox, target_ptr: usize, viewport: Size<f32>, parent_box_type: Option<BoxType>) {
+    fn relayout_node(&mut self, root: &mut LayoutBox, target_ptr: usize, constraint: ConstraintSpace, parent_box_type: Option<BoxType>) {
         let current_ptr = root as *const LayoutBox as usize;
         if current_ptr == target_ptr {
-            self.calculate_sizes(root, viewport, parent_box_type);
+            self.calculate_sizes(root, constraint, parent_box_type);
             return;
         }
         for child in &mut root.children {
-            self.relayout_node(child, target_ptr, viewport, Some(root.box_type.clone()));
+            self.relayout_node(child, target_ptr, constraint.for_child(), Some(root.box_type.clone()));
         }
     }
 
@@ -494,6 +495,22 @@ fn build_layout_box(
                 for child in &layout_box.children {
                     content_h += child.rect.height
                         + child.margin.top + child.margin.bottom;
+                }
+                // InlineBlock 元素（input, button 等表单控件）即使内容为空
+                // 也至少需要容纳一行文字的高度，否则键入文本时高度突变
+                if content_h <= 0.0 && layout_box.box_type == BoxType::InlineBlock {
+                    if let Some(font_size_val) = style.and_then(|s| s.get("font-size")) {
+                        let font_size_px = match font_size_val {
+                            style::values::CSSValue::Length(px, _) => Some(*px),
+                            style::values::CSSValue::Keyword(k) => {
+                                k.strip_suffix("px").and_then(|s| s.parse::<f32>().ok())
+                            }
+                            _ => None,
+                        };
+                        if let Some(px) = font_size_px {
+                            content_h = px * 1.2;
+                        }
+                    }
                 }
                 if content_h > 0.0 {
                     layout_box.set_content_area(Size::new(

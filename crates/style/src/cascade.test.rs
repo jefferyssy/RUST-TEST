@@ -6,7 +6,7 @@ use dom::Color;
 #[test]
 fn test_computed_style_new() {
     let cs = ComputedStyle::new();
-    assert!(cs.properties.is_empty());
+    assert!(cs.is_empty());
 }
 
 #[test]
@@ -44,6 +44,7 @@ fn test_compute_element_style_basic() {
     let element = ElementData::new("div");
     let sheet = StyleSheet {
         url: "test.css".to_string(),
+        selector_index: None,
         rules: vec![Rule {
             selectors: vec!["div".to_string()],
             declarations: vec![
@@ -62,6 +63,7 @@ fn test_inline_style_overrides() {
     let element = ElementData::new("div");
     let sheet = StyleSheet {
         url: "test.css".to_string(),
+        selector_index: None,
         rules: vec![Rule {
             selectors: vec!["div".to_string()],
             declarations: vec![
@@ -82,6 +84,7 @@ fn test_important_overrides_inline() {
     let element = ElementData::new("div");
     let sheet = StyleSheet {
         url: "test.css".to_string(),
+        selector_index: None,
         rules: vec![Rule {
             selectors: vec!["div".to_string()],
             declarations: vec![
@@ -117,6 +120,7 @@ fn test_specificity_ordering() {
     // 类选择器比标签选择器优先级高
     let sheet = StyleSheet {
         url: "test.css".to_string(),
+        selector_index: None,
         rules: vec![
             Rule {
                 selectors: vec!["div".to_string()],

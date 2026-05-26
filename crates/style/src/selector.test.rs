@@ -51,6 +51,7 @@ fn test_match_selectors() {
     let e = make_element("div", None, &["foo"]);
     let sheet = StyleSheet {
         url: "test.css".to_string(),
+        selector_index: None,
         rules: vec![
             Rule {
                 selectors: vec!["div".to_string()],

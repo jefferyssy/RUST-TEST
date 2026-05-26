@@ -1,6 +1,6 @@
 use super::*;
 use crate::command::PaintCommand;
-use style::cascade::ComputedStyle;
+use style::ComputedStyle;
 use style::values::{CSSUnit, CSSValue};
 use dom::{Color, Rect};
 use layout::layout_box::{BoxType, LayoutBox};

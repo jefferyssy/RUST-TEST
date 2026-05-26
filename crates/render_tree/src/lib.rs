@@ -7,6 +7,8 @@
 pub mod command;
 pub mod builder;
 pub mod optimizer;
+pub mod chunk;
+pub mod property_trees;
 
 pub use command::{
     PaintCommand, DisplayList,
@@ -14,3 +16,5 @@ pub use command::{
 };
 pub use builder::DisplayListBuilder;
 pub use optimizer::BatchOptimizer;
+pub use chunk::{PaintChunk, ChunkList};
+pub use property_trees::PropertyTrees;

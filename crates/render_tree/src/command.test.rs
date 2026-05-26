@@ -18,6 +18,7 @@ fn test_push_and_commands() {
     });
     assert_eq!(dl.len(), 1);
     assert!(!dl.is_empty());
+    dl.sort_by_z_order();
     assert_eq!(dl.commands().len(), 1);
 }
 
@@ -56,6 +57,7 @@ fn test_multiple_commands() {
         color: Color::BLACK,
         decoration: TextDecoration::None,
     });
+    dl.sort_by_z_order();
     assert_eq!(dl.len(), 3);
     match &dl.commands()[0] {
         PaintCommand::FillRect { color, .. } => assert_eq!(*color, Color::rgb(255, 0, 0)),

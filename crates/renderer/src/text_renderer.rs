@@ -30,6 +30,8 @@ struct GlyphEntry {
     bearing_y: f32,
     /// 水平步进量
     advance: f32,
+    /// P1-7: 最近访问时间戳（逻辑时钟，用于 LRU 淘汰）
+    last_used: u64,
 }
 
 /// 字形缓存键
@@ -78,6 +80,8 @@ pub struct TextRenderer {
     /// 暂存纹理数据的缓冲区（CPU 端）
     atlas_buffer: Vec<u8>,
     atlas_dirty: bool,
+    /// P1-7: LRU 逻辑时钟，每次访问字形时递增
+    clock: u64,
 }
 
 impl TextRenderer {
@@ -130,6 +134,7 @@ impl TextRenderer {
             glyph_cache: HashMap::new(),
             atlas_buffer,
             atlas_dirty: false,
+            clock: 0,
         }
     }
 
@@ -304,11 +309,23 @@ impl TextRenderer {
         scale: ab_glyph::PxScale,
     ) -> GlyphEntry {
         if let Some(entry) = self.glyph_cache.get(key) {
-            return entry.clone();
+            // P1-7: 命中时更新时间戳
+            let mut e = entry.clone();
+            self.clock += 1;
+            e.last_used = self.clock;
+            let _ = self.glyph_cache.insert(
+                GlyphKey { font_hash: key.font_hash, glyph_id: key.glyph_id, size_bits: key.size_bits },
+                e.clone(),
+            );
+            return e;
         }
 
         let ab_glyph_id = ab_glyph::GlyphId(glyph_id as u16);
         let glyph = ab_glyph_id.with_scale(scale);
+
+        // P1-7: 新字形递增时钟
+        self.clock += 1;
+        let current_clock = self.clock;
 
         let entry = match ag_font.outline_glyph(glyph) {
             Some(outlined) => {
@@ -316,25 +333,20 @@ impl TextRenderer {
                 let gw = bounds.width().ceil() as u32;
                 let gh = bounds.height().ceil() as u32;
                 let bearing_x = bounds.min.x;
-                let bearing_y = -bounds.min.y; // ab_glyph Y-down: 基线到字形顶部 = -min.y
+                let bearing_y = -bounds.min.y;
                 let advance = ag_font.h_advance_unscaled(ab_glyph_id) * scale.x
                     / ag_font.height_unscaled();
 
                 if gw == 0 || gh == 0 {
                     GlyphEntry {
-                        atlas_x: 0,
-                        atlas_y: 0,
-                        width: 0,
-                        height: 0,
-                        bearing_x,
-                        bearing_y,
-                        advance,
+                        atlas_x: 0, atlas_y: 0,
+                        width: 0, height: 0,
+                        bearing_x, bearing_y, advance,
+                        last_used: current_clock,
                     }
                 } else {
-                    // 分配时留 1px 边距，防止线性采样渗透到相邻字形
                     let pad = 1u32;
                     let (ax, ay) = self.allocate_atlas_region(gw + pad * 2, gh + pad * 2);
-                    // 光栅化到 CPU 缓冲区（偏移 pad 写入，留出边距）
                     outlined.draw(|px, py, coverage| {
                         let bx = ax as usize + pad as usize + px as usize;
                         let by = ay as usize + pad as usize + py as usize;
@@ -348,25 +360,20 @@ impl TextRenderer {
                     });
                     self.atlas_dirty = true;
                     GlyphEntry {
-                        atlas_x: ax + pad,
-                        atlas_y: ay + pad,
-                        width: gw,
-                        height: gh,
-                        bearing_x,
-                        bearing_y,
-                        advance,
+                        atlas_x: ax + pad, atlas_y: ay + pad,
+                        width: gw, height: gh,
+                        bearing_x, bearing_y, advance,
+                        last_used: current_clock,
                     }
                 }
             }
             None => GlyphEntry {
-                atlas_x: 0,
-                atlas_y: 0,
-                width: 0,
-                height: 0,
-                bearing_x: 0.0,
-                bearing_y: 0.0,
+                atlas_x: 0, atlas_y: 0,
+                width: 0, height: 0,
+                bearing_x: 0.0, bearing_y: 0.0,
                 advance: ag_font.h_advance_unscaled(ab_glyph_id) * scale.x
                     / ag_font.height_unscaled(),
+                last_used: current_clock,
             },
         };
 
@@ -392,14 +399,9 @@ impl TextRenderer {
             self.atlas_row_height = 0;
         }
 
-        // 如果超出底部，回绕并清空图集
+        // P1-7: 空间不足时 LRU 淘汰，而非全量清除
         if self.atlas_cursor_y + h > self.atlas_height {
-            self.atlas_cursor_x = 0;
-            self.atlas_cursor_y = 0;
-            self.atlas_row_height = 0;
-            self.glyph_cache.clear();
-            self.atlas_buffer.fill(0);
-            self.atlas_dirty = true;
+            self.evict_lru();
         }
 
         let result = (self.atlas_cursor_x, self.atlas_cursor_y);
@@ -528,5 +530,47 @@ impl TextRenderer {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         std::hash::Hash::hash_slice(data, &mut hasher);
         hasher.finish()
+    }
+
+    /// P1-7: LRU 淘汰 —— 移除 25% 最久未使用的字形条目
+    fn evict_lru(&mut self) {
+        if self.glyph_cache.len() < 16 {
+            // 条目太少，直接重建
+            self.glyph_cache.clear();
+            self.atlas_cursor_x = 0;
+            self.atlas_cursor_y = 0;
+            self.atlas_row_height = 0;
+            self.atlas_buffer.fill(0);
+            self.atlas_dirty = true;
+            return;
+        }
+
+        // 收集并按 last_used 排序
+        let mut entries: Vec<(GlyphKey, u64)> = self
+            .glyph_cache
+            .iter()
+            .map(|(k, v)| {
+                let key = GlyphKey {
+                    font_hash: k.font_hash,
+                    glyph_id: k.glyph_id,
+                    size_bits: k.size_bits,
+                };
+                (key, v.last_used)
+            })
+            .collect();
+        entries.sort_by_key(|(_, ts)| *ts);
+
+        // 淘汰最旧的 25%
+        let evict_count = (entries.len() / 4).max(1);
+        for (key, _) in entries.iter().take(evict_count) {
+            self.glyph_cache.remove(key);
+        }
+
+        // 重置图集分配状态
+        self.atlas_cursor_x = 0;
+        self.atlas_cursor_y = 0;
+        self.atlas_row_height = 0;
+        self.atlas_buffer.fill(0);
+        self.atlas_dirty = true;
     }
 }

@@ -153,8 +153,20 @@ pub fn match_selectors(
     stylesheets: &[StyleSheet],
 ) -> Vec<MatchedDeclaration> {
     let mut results = Vec::new();
+    let tag = element.tag_name();
+    let classes: Vec<String> = element.class_list().iter().cloned().collect();
+    let id = element.id().map(|s| s.as_str());
+
     for sheet in stylesheets {
-        for rule in &sheet.rules {
+        // P0-3: 使用选择器索引快速筛选候选规则
+        let rule_indices: Vec<usize> = if let Some(ref index) = sheet.selector_index {
+            index.candidates(tag, &classes, id)
+        } else {
+            (0..sheet.rules.len()).collect()
+        };
+
+        for &rule_idx in &rule_indices {
+            let rule = &sheet.rules[rule_idx];
             for selector in &rule.selectors {
                 if element_matches_selector(element, selector) {
                     let specificity = compute_specificity(selector);
@@ -177,8 +189,30 @@ pub fn match_selectors_full(
     stylesheets: &[StyleSheet],
 ) -> Vec<MatchedDeclaration> {
     let mut results = Vec::new();
+
+    // P0-3: 提取元素信息用于选择器索引
+    let (tag, classes, id) = {
+        let n = node.borrow();
+        match &n.node_type {
+            dom::NodeType::Element(elem) => {
+                let t = elem.tag_name().to_string();
+                let c: Vec<String> = elem.class_list().iter().cloned().collect();
+                let i = elem.id().map(|s| s.to_string());
+                (t, c, i)
+            }
+            _ => (String::new(), Vec::new(), None),
+        }
+    };
+
     for sheet in stylesheets {
-        for rule in &sheet.rules {
+        let rule_indices: Vec<usize> = if let Some(ref index) = sheet.selector_index {
+            index.candidates(&tag, &classes, id.as_deref())
+        } else {
+            (0..sheet.rules.len()).collect()
+        };
+
+        for &rule_idx in &rule_indices {
+            let rule = &sheet.rules[rule_idx];
             for selector in &rule.selectors {
                 if element_matches_selector_with_node(node, selector) {
                     let specificity = compute_specificity(selector);
@@ -1063,18 +1097,112 @@ fn matches_segment_parts(node: &Rc<RefCell<dom::Node>>, parts: &[SelectorPart]) 
     true
 }
 
+// ============================================================
+//  P1-5: Bloom Filter 快速拒绝
+// ============================================================
+
+/// 选择器 Bloom Filter — 用于后代/子代组合器的快速祖先拒绝
+///
+/// 在每个元素的级联计算时构建，包含该元素的 tag、所有 class、id。
+/// 祖先搜索前，先用 Bloom Filter 检查祖先是否能匹配段 parts：
+/// 如果 filter 无法包含所有 parts → 该祖先不可能匹配 → 跳过昂贵的完整匹配。
+struct SelectorBloomFilter {
+    bits: u64,
+}
+
+impl SelectorBloomFilter {
+    fn new() -> Self {
+        Self { bits: 0 }
+    }
+
+    fn insert(&mut self, token: &str) {
+        self.bits |= Self::hash(token);
+    }
+
+    fn contains(&self, token: &str) -> bool {
+        let h = Self::hash(token);
+        (self.bits & h) == h
+    }
+
+    /// 检查 filter 是否可能包含所有给定 parts 中提到的 tag/class/id 标识符
+    ///
+    /// 返回 false 表示该祖先绝对不匹配 → 可跳过完整匹配
+    fn could_match_segment(&self, parts: &[SelectorPart]) -> bool {
+        parts.iter().all(|part| match part {
+            SelectorPart::Tag(t) => self.contains(t),
+            SelectorPart::Class(c) => self.contains(c),
+            SelectorPart::Id(i) => self.contains(i),
+            // 属性选择器和伪类不能通过 Bloom 快速拒绝
+            SelectorPart::Attribute { .. } | SelectorPart::PseudoClass(_) => true,
+        })
+    }
+
+    fn hash(s: &str) -> u64 {
+        // FNV-1a 64-bit hash，产生 3 个独立的位位置（模拟 3 个 hash 函数）
+        let mut h: u64 = 0xcbf29ce484222325;
+        for byte in s.bytes() {
+            h ^= byte as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        // 从单个 64-bit hash 派生出 3 个位位置
+        let h1 = h & 0x3f; // bits 0-5 (6 bits → 64 positions)
+        let h2 = (h >> 6) & 0x3f;
+        let h3 = (h >> 12) & 0x3f;
+        (1u64 << h1) | (1u64 << h2) | (1u64 << h3)
+    }
+
+    /// 从元素的所有标识信息构建 Bloom Filter
+    fn from_element(tag: &str, classes: &[String], id: Option<&String>) -> Self {
+        let mut filter = Self::new();
+        filter.insert(tag);
+        for class in classes {
+            filter.insert(class);
+        }
+        if let Some(id) = id {
+            filter.insert(id.as_str());
+        }
+        filter
+    }
+}
+
+// ============================================================
+//  Phase 3: 带 Bloom Filter 的祖先匹配
+// ============================================================
+
 /// 查找匹配的祖先节点（后代组合器）
+/// P1-5: 使用 Bloom Filter 快速拒绝不可能匹配的祖先
 fn find_ancestor_matching(
     node: &Rc<RefCell<dom::Node>>,
     parts: &[SelectorPart],
 ) -> Option<Rc<RefCell<dom::Node>>> {
     let mut current = node.borrow().parent_node()?;
     loop {
+        // P1-5: Bloom Filter 快速拒绝
+        if !bloom_filter_could_match(&current, parts) {
+            let parent = current.borrow().parent_node()?;
+            current = parent;
+            continue;
+        }
         if matches_segment_parts(&current, parts) {
             return Some(current.clone());
         }
         let parent = current.borrow().parent_node()?;
         current = parent;
+    }
+}
+
+/// P1-5: 从节点提取标识信息构建 Bloom Filter 并快速检查
+fn bloom_filter_could_match(node: &Rc<RefCell<dom::Node>>, parts: &[SelectorPart]) -> bool {
+    let n = node.borrow();
+    match &n.node_type {
+        NodeType::Element(elem) => {
+            let tag = elem.tag_name();
+            let classes = elem.class_list();
+            let id = elem.id();
+            let filter = SelectorBloomFilter::from_element(tag, &classes, id);
+            filter.could_match_segment(parts)
+        }
+        _ => true, // 非元素节点不拒绝
     }
 }
 
@@ -1084,6 +1212,10 @@ fn find_parent_matching(
     parts: &[SelectorPart],
 ) -> Option<Rc<RefCell<dom::Node>>> {
     let parent = node.borrow().parent_node()?;
+    // P1-5: Bloom Filter 快速拒绝
+    if !bloom_filter_could_match(&parent, parts) {
+        return None;
+    }
     if matches_segment_parts(&parent, parts) {
         Some(parent.clone())
     } else {
@@ -1097,6 +1229,10 @@ fn find_prev_sibling_matching(
     parts: &[SelectorPart],
 ) -> Option<Rc<RefCell<dom::Node>>> {
     let sibling = node.borrow().previous_sibling()?;
+    // P1-5: Bloom Filter 快速拒绝
+    if !bloom_filter_could_match(&sibling, parts) {
+        return None;
+    }
     if matches_segment_parts(&sibling, parts) {
         Some(sibling)
     } else {
@@ -1111,8 +1247,11 @@ fn find_prev_sibling_general(
 ) -> Option<Rc<RefCell<dom::Node>>> {
     let mut current = node.borrow().previous_sibling()?;
     loop {
-        if matches_segment_parts(&current, parts) {
-            return Some(current.clone());
+        // P1-5: Bloom Filter 快速拒绝
+        if bloom_filter_could_match(&current, parts) {
+            if matches_segment_parts(&current, parts) {
+                return Some(current.clone());
+            }
         }
         let next = current.borrow().previous_sibling()?;
         current = next;

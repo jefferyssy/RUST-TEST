@@ -41,7 +41,22 @@
       "Bash(taskkill /F /IM counter.exe)",
       "Bash(rm -f e:/demoSpace/rust-test/generated/counter/target/debug/counter.exe)",
       "Bash(timeout 8 e:/demoSpace/rust-test/generated/counter/target/debug/counter.exe)",
-      "Bash(powershell -Command \"Stop-Process -Name 'flex-nav' -Force -ErrorAction SilentlyContinue\")"
+      "Bash(powershell -Command \"Stop-Process -Name 'flex-nav' -Force -ErrorAction SilentlyContinue\")",
+      "WebSearch",
+      "WebFetch(domain:deepwiki.com)",
+      "WebFetch(domain:sujeet.pro)",
+      "WebFetch(domain:grida.co)",
+      "WebFetch(domain:chromium.googlesource.com)",
+      "WebFetch(domain:new.chromium.org)",
+      "WebFetch(domain:zhuanlan.zhihu.com)",
+      "Bash(timeout 2 cargo run)",
+      "Read(//tmp/**)",
+      "Bash(tee /tmp/todo_run.log)",
+      "Bash(bash e:/demoSpace/rust-test/.claude/skills/run-rust-test/smoke.sh smoke)",
+      "Edit(/.claude/skills/run-rust-test/**)",
+      "Bash(mkdir -p /tmp/taffy_check)",
+      "Bash(tar xzf *)",
+      "Bash(DUMP_LAYOUT_TREE=1 cargo run -p toolchain -- compile examples/todo_app -o target/generated/todo_app_dump_test)"
     ]
   }
 }

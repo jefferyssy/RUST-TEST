@@ -7,15 +7,22 @@
 //! 2. 从节点的 ComputedStyle 中提取背景色、边框、文本等属性
 //! 3. 生成对应的 PaintCommand 并插入 DisplayList
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use layout::layout_box::{BoxType, LayoutBox};
 use dom::Color;
 
 use crate::command::{BorderStyle, DisplayList, PaintCommand, TextDecoration};
 
+/// 全局 DisplayList 版本号，每次 build() 时单调递增
+static DL_GENERATION: AtomicU64 = AtomicU64::new(0);
+
 /// Paint 命令构建器 —— 将布局树转换为绘制命令
 pub struct DisplayListBuilder {
     /// 输出列表
     display_list: DisplayList,
+    /// P0-5: 当前视口（用于裁剪不可见节点）
+    viewport: dom::Rect<f32>,
 }
 
 impl DisplayListBuilder {
@@ -23,28 +30,36 @@ impl DisplayListBuilder {
     pub fn new() -> Self {
         Self {
             display_list: DisplayList::new(),
+            viewport: dom::Rect::new(0.0, 0.0, f32::MAX, f32::MAX),
         }
     }
 
+    /// 设置视口范围（P0-5: 视口裁剪）
+    pub fn with_viewport(mut self, viewport: dom::Rect<f32>) -> Self {
+        self.viewport = viewport;
+        self
+    }
+
     /// 主入口：从布局树构建 DisplayList
-    ///
-    /// 遍历 LayoutTree，为每个节点生成对应的 PaintCommand：
-    /// 1. background-color → FillRect
-    /// 2. border → Border
-    /// 3. text content → Text
-    ///
-    /// 返回构建完成的 DisplayList
     pub fn build(&mut self, layout_root: &LayoutBox) -> DisplayList {
         self.display_list.clear();
         self.process_node(layout_root);
         self.display_list.sort_by_z_order();
 
-        // 取出当前构建好的列表
+        // P1-9: 分配唯一版本号，渲染器据此检测 DL 变更
+        let gen = DL_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
+        self.display_list.set_generation(gen);
+
         std::mem::take(&mut self.display_list)
     }
 
     /// 处理单个布局节点
     fn process_node(&mut self, node: &LayoutBox) {
+        // P0-5: 视口裁剪 — 完全不可见的节点跳过绘制
+        if !is_visible_in_viewport(&node.rect, &self.viewport) {
+            return;
+        }
+
         // 0. 盒阴影 → BoxShadow（渲染在背景之下）
         if let Some(shadow) = Self::extract_box_shadow(node) {
             self.display_list.push(shadow);
@@ -63,7 +78,6 @@ impl DisplayListBuilder {
         if let Some(border) = Self::extract_border(node) {
             self.display_list.push(border);
         }
-        // 2b. 单边边框（border-top/right/bottom/left）
         for side in &["border-top", "border-right", "border-bottom", "border-left"] {
             if let Some(border) = Self::extract_single_border(node, side) {
                 self.display_list.push(border);
@@ -325,6 +339,15 @@ fn parse_css_value_color(value: &style::values::CSSValue) -> Option<Color> {
         }
         _ => None,
     }
+}
+
+/// P0-5: 检查矩形容器是否在视口内可见（含扩展边距以覆盖阴影/边框）
+fn is_visible_in_viewport(rect: &dom::Rect<f32>, viewport: &dom::Rect<f32>) -> bool {
+    let margin = 50.0; // 扩展边距覆盖阴影/blur
+    rect.x + rect.width + margin > viewport.x
+        && rect.x - margin < viewport.x + viewport.width
+        && rect.y + rect.height + margin > viewport.y
+        && rect.y - margin < viewport.y + viewport.height
 }
 
 // Phase 1+: BatchOptimizer 合批优化
