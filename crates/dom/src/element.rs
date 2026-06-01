@@ -40,6 +40,11 @@ impl ElementData {
         self.attributes.get(name).cloned()
     }
 
+    /// 获取所有属性名（用于 CDP DevTools）
+    pub fn attribute_names(&self) -> Vec<String> {
+        self.attributes.keys().cloned().collect()
+    }
+
     /// 设置属性
     /// 当 name="class" 时自动同步 class_list
     /// 当 name="id" 时自动同步 id 字段

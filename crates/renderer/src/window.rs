@@ -39,6 +39,7 @@ use winit::keyboard::{Key, NamedKey};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowAttributes};
 
+use crate::devtools::{self, DevToolsHandle};
 use crate::event_loop::AnimationFrameScheduler;
 use crate::hit_test::HitTester;
 
@@ -158,6 +159,7 @@ impl WebWindow {
             focused_element: None,
             cursor_visible: true,
             last_cursor_toggle: 0.0,
+            devtools: devtools::start(9222),
         };
 
         let _ = event_loop.run_app(&mut app);
@@ -185,6 +187,8 @@ struct App {
     cursor_visible: bool,
     /// 上次光标切换时间（毫秒）
     last_cursor_toggle: f64,
+    /// DevTools 调试句柄
+    devtools: DevToolsHandle,
 }
 
 impl ApplicationHandler for App {
@@ -287,6 +291,18 @@ impl ApplicationHandler for App {
         if now - self.last_cursor_toggle > 530.0 {
             self.cursor_visible = !self.cursor_visible;
             self.last_cursor_toggle = now;
+        }
+
+        // 更新 DevTools CDP 快照
+        if let Some(ref root) = self.layout_root {
+            let doc = self.document.borrow();
+            let doc_el = doc.document_element();
+            let snap = devtools::build_snapshot(&doc_el, &self.styles, root);
+            *self.devtools.snapshot.write().unwrap() = Some(snap);
+            // 仅在 DOM 实际变更时通知 Chrome DevTools，避免树闪烁
+            if self.devtools.take_dirty() {
+                self.devtools.push_event(r#"{"method":"DOM.documentUpdated"}"#);
+            }
         }
 
         if let Some(ref window) = self.window {
@@ -448,6 +464,7 @@ impl App {
                     let new_dl = builder.build(layout_root);
                     self.display_list = Some(new_dl);
                 }
+                self.devtools.mark_dirty();
                 return;
             }
         }
@@ -471,6 +488,7 @@ impl App {
         self.styles = styles;
         self.layout_root = Some(new_root);
         self.display_list = Some(new_dl);
+        self.devtools.mark_dirty();
     }
 }
 

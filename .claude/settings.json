@@ -56,7 +56,8 @@
       "Edit(/.claude/skills/run-rust-test/**)",
       "Bash(mkdir -p /tmp/taffy_check)",
       "Bash(tar xzf *)",
-      "Bash(DUMP_LAYOUT_TREE=1 cargo run -p toolchain -- compile examples/todo_app -o target/generated/todo_app_dump_test)"
+      "Bash(DUMP_LAYOUT_TREE=1 cargo run -p toolchain -- compile examples/todo_app -o target/generated/todo_app_dump_test)",
+      "Bash(taskkill /f /im todo_app.exe)"
     ]
   }
 }

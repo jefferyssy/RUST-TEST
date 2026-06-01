@@ -329,6 +329,39 @@ fn collect_elements(tokens: &[Token]) -> Vec<HtmlElement> {
     roots
 }
 
+/// 从 HTML 源码中提取外部资源引用（CSS 和 JS 文件路径）。
+///
+/// 扫描 `<link rel="stylesheet" href="...">` 和 `<script src="...">` 标签，
+/// 返回 `(css_files, js_files)` 两个列表。
+///
+/// 用于 CLI 工具链在调用编译器之前确定需要加载哪些 CSS/JS 文件。
+pub fn extract_references(html: &str) -> (Vec<String>, Vec<String>) {
+    let cleaned = strip_comments(html);
+    let tokens = tokenize(&cleaned);
+    let mut css_files = Vec::new();
+    let mut js_files = Vec::new();
+
+    for token in &tokens {
+        match token {
+            Token::OpenTag { name, attrs, .. } if name == "link" => {
+                if attrs.get("rel").map(|r| r.to_lowercase()) == Some("stylesheet".into()) {
+                    if let Some(href) = attrs.get("href") {
+                        css_files.push(href.clone());
+                    }
+                }
+            }
+            Token::OpenTag { name, attrs, .. } if name == "script" => {
+                if let Some(src) = attrs.get("src") {
+                    js_files.push(src.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    (css_files, js_files)
+}
+
 /// 主入口：解析 HTML 字符串，返回 body 内的元素树
 pub fn parse_html(html: &str) -> Vec<HtmlElement> {
     let cleaned = strip_comments(html);

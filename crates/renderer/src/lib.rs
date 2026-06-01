@@ -12,6 +12,7 @@ pub mod window_trait;
 pub mod event_loop;
 pub mod hit_test;
 pub mod observer_manager;
+pub mod devtools;
 
 pub use wgpu_backend::{WgpuBackend, TextureAtlas};
 pub use text_renderer::TextRenderer;

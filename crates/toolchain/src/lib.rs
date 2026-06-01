@@ -69,14 +69,24 @@ pub fn compile_body(html_path: &str, css_path: &str, js_path: &str) -> String {
 }
 
 /// 编译为 main() 函数体（可配置窗口参数）
+///
+/// CSS/JS 路径为空字符串时视为"无此文件"，使用空内容代替。
 pub fn compile_body_with_options(html_path: &str, css_path: &str, js_path: &str, opts: &CompileOptions) -> String {
-    // 读取源文件
+    // 读取源文件（空路径 → 空内容）
     let html_src = fs::read_to_string(html_path)
         .unwrap_or_else(|e| panic!("Cannot read HTML file '{}': {}", html_path, e));
-    let css_src = fs::read_to_string(css_path)
-        .unwrap_or_else(|e| panic!("Cannot read CSS file '{}': {}", css_path, e));
-    let js_src = fs::read_to_string(js_path)
-        .unwrap_or_else(|e| panic!("Cannot read JS file '{}': {}", js_path, e));
+    let css_src = if css_path.is_empty() {
+        String::new()
+    } else {
+        fs::read_to_string(css_path)
+            .unwrap_or_else(|e| panic!("Cannot read CSS file '{}': {}", css_path, e))
+    };
+    let js_src = if js_path.is_empty() {
+        String::new()
+    } else {
+        fs::read_to_string(js_path)
+            .unwrap_or_else(|e| panic!("Cannot read JS file '{}': {}", js_path, e))
+    };
 
     // === Phase 1: 解析 HTML → 元素树 ===
     let elements = html::parse_html(&html_src);
