@@ -64,7 +64,7 @@ rust-test/
 │   │       ├── table.rs         # Table 表格布局（TableRow/TableCell + colspan/rowspan）
 │   │       └── text.rs          # TextMeasurer 文本测量（字符宽度/换行计算）
 │   │
-│   ├── render_tree/             # 渲染树（DisplayList 构建 + 批处理优化）
+│   ├── paint/             # 渲染树（DisplayList 构建 + 批处理优化）
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs           # 模块导出
@@ -72,7 +72,7 @@ rust-test/
 │   │       ├── builder.rs       # DisplayListBuilder（LayoutBox→PaintCommand 转换）
 │   │       └── optimizer.rs     # BatchOptimizer（合批 + 遮挡剔除优化）
 │   │
-│   ├── renderer/                # 渲染后端 + 运行时整合
+│   ├── render_wgpu/                # 渲染后端 + 运行时整合
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs           # RenderBackend trait + 模块导出
@@ -84,7 +84,7 @@ rust-test/
 │   │       ├── hit_test.rs      # HitTester（坐标命中检测 + 事件冒泡路径）
 │   │       └── observer_manager.rs # ObserverManager（Resize/Intersection/Mutation 观察者调度）
 │   │
-│   ├── toolchain/               # 命令工具（HTML+CSS+JS → Rust 代码编译器）
+│   ├── compiler/               # 命令工具（HTML+CSS+JS → Rust 代码编译器）
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs           # compile()/compile_body() 入口 + 代码生成
@@ -113,7 +113,7 @@ rust-test/
 ├── examples/
 │   ├── counter/                 # 计数器 Demo — 源文件驱动模式
 │   │   ├── Cargo.toml
-│   │   ├── build.rs             # 构建时调用 toolchain 编译源文件
+│   │   ├── build.rs             # 构建时调用 compiler 编译源文件
 │   │   ├── .gitignore           # 忽略 src/（自动生成）
 │   │   ├── index.html           # 源文件：HTML 结构
 │   │   ├── style.css            # 源文件：CSS 样式
@@ -177,7 +177,7 @@ rust-test/
 HTML+CSS+JS 源文件
       │
       ▼
-[toolchain] 命令工具 — 编译为 Rust 代码（WebWindow + DOM API 调用）
+[cli] 命令工具 — 编译为 Rust 代码（WebWindow + DOM API 调用）
       │
       ▼
 [dom] DOM 树构建 + 事件系统 + Mutation/Resize/Intersection 观察者
@@ -189,10 +189,10 @@ HTML+CSS+JS 源文件
 [layout] 布局计算 — Flex/Block/Inline/Grid/Table/Positioned/Float
       │
       ▼
-[render_tree] 渲染树生成 — DisplayList 构建 + 批处理/遮挡剔除优化
+[paint] 渲染树生成 — DisplayList 构建 + 批处理/遮挡剔除优化
       │
       ▼
-[renderer] 最终渲染 — wgpu GPU 后端 + winit 窗口 + 事件循环 + HitTest + 观察者调度
+[render_wgpu] 最终渲染 — wgpu GPU 后端 + winit 窗口 + 事件循环 + HitTest + 观察者调度
       │
       ▼
 [屏幕]
@@ -204,11 +204,11 @@ HTML+CSS+JS 源文件
 
 | Crate | 管线阶段 | 核心功能 |
 |-------|---------|---------|
-| `toolchain` | 命令工具 | HTML+CSS+JS → Rust 编译器，含解析/分析/代码生成/内置 API 映射 |
+| `compiler` | 命令工具 | HTML+CSS+JS → Rust 编译器，含解析/分析/代码生成/内置 API 映射 |
 | `dom` | 解析 | W3C DOM 标准实现（Node/Element/Document/Event/HTML 元素/Observer） |
 | `style` | 样式系统 | CSS 引擎（选择器/级联/值类型/动画/过渡/媒体查询/自定义属性） |
 | `layout` | 布局 | 7 种布局模式（Flex/Block/Inline/Grid/Table/Positioned/Float） |
-| `render_tree` | 渲染树 | DisplayList 构建 + 批处理优化器（合批/遮挡剔除） |
+| `paint` | 渲染树 | DisplayList 构建 + 批处理优化器（合批/遮挡剔除） |
 | `renderer` | 最终渲染 | wgpu 渲染 + winit 窗口 + 事件循环 + HitTest + ObserverManager |
 | `net` | 网络 | fetch API + WebSocket（含重连/心跳） |
 | `storage` | 存储 | localStorage / sessionStorage |
@@ -218,13 +218,13 @@ HTML+CSS+JS 源文件
 ## 模块依赖关系
 
 ```
-examples     → renderer + toolchain (build-dep)
-renderer     → style + layout + render_tree + dom
-render_tree  → dom + style + layout
+examples     → render_wgpu + compiler (build-dep)
+renderer     → style + layout + paint + dom
+paint  → dom + style + layout
 layout       → dom + style + taffy + rustybuzz + fontdb
 style        → dom + cssparser + selectors
 dom          → （无外部依赖）
-toolchain    → （无外部依赖，纯 Rust 标准库 + 文件系统）
+compiler    → （无外部依赖，纯 Rust 标准库 + 文件系统）
 net          → dom
 storage      → dom
 ```
@@ -291,7 +291,7 @@ storage      → dom
 | `table.rs` | Table 表格布局（TableRow/TableCell + colspan/rowspan + border-spacing） |
 | `text.rs` | TextMeasurer：字符宽度估算 + 文本换行计算 |
 
-### render_tree/ — 渲染树（3 个源文件 + 2 个测试文件）
+### paint/ — 渲染树（3 个源文件 + 2 个测试文件）
 
 | 文件 | 功能 |
 |------|------|
@@ -300,7 +300,7 @@ storage      → dom
 | `builder.rs` | DisplayListBuilder：LayoutBox 树 → PaintCommand 列表（背景/边框/文本绘制命令） |
 | `optimizer.rs` | BatchOptimizer：合批（同色矩形合并）+ 遮挡剔除（不透明区域覆盖移除） |
 
-### renderer/ — 最终渲染 + 运行时整合（8 个源文件 + 1 个测试文件）
+### render_wgpu/ — 最终渲染 + 运行时整合（8 个源文件 + 1 个测试文件）
 
 | 文件 | 功能 |
 |------|------|
@@ -313,7 +313,7 @@ storage      → dom
 | `hit_test.rs` | HitTester（坐标命中检测 + 事件冒泡路径收集 + 可交互路径构建） |
 | `observer_manager.rs` | ObserverManager（ResizeObserver/IntersectionObserver/MutationObserver 统一调度） |
 
-### toolchain/ — 命令工具编译器（8 个源文件 + 4 个测试文件 + 1 个目录）
+### compiler/ — 命令工具编译器（8 个源文件 + 4 个测试文件 + 1 个目录）
 
 | 文件 | 功能 |
 |------|------|
@@ -363,13 +363,13 @@ storage      → dom
 | layout | `block.test.rs` | Block 布局 |
 | layout | `text.test.rs` | 文本测量 |
 | layout | `positioned.test.rs` | 定位布局 |
-| render_tree | `command.test.rs` | 绘制命令 |
-| render_tree | `builder.test.rs` | DisplayList 构建 |
-| renderer | `lib.test.rs` | 渲染后端测试 |
-| toolchain | `lib.test.rs` | 代码生成 |
-| toolchain | `html.test.rs` | HTML 解析 |
-| toolchain | `css.test.rs` | CSS 解析 |
-| toolchain | `js.test.rs` | JS 编译 |
+| paint | `command.test.rs` | 绘制命令 |
+| paint | `builder.test.rs` | DisplayList 构建 |
+| render_wgpu | `lib.test.rs` | 渲染后端测试 |
+| compiler | `lib.test.rs` | 代码生成 |
+| compiler | `html.test.rs` | HTML 解析 |
+| compiler | `css.test.rs` | CSS 解析 |
+| compiler | `js.test.rs` | JS 编译 |
 
 **内联测试模块（文件内 `#[cfg(test)]`）:**
 
@@ -379,11 +379,11 @@ storage      → dom
 | style | `transitions.rs` | 14 个（缓动/过渡/延迟/完成/插值） |
 | style | `media.rs` | 4 个（视口/媒体查询匹配） |
 | style | `properties.rs` | 4 个（属性解析） |
-| toolchain | `builtins.rs` | 17 个（API 映射查找） |
-| toolchain | `analyzer.rs` | 16 个（语义分析/字符串提取） |
-| render_tree | `optimizer.rs` | 6 个（合批/遮挡剔除） |
-| renderer | `hit_test.rs` | 10 个（命中检测/矩形包含/冒泡路径） |
-| renderer | `event_loop.rs` | 8 个（动画帧调度） |
+| compiler | `builtins.rs` | 17 个（API 映射查找） |
+| compiler | `analyzer.rs` | 16 个（语义分析/字符串提取） |
+| paint | `optimizer.rs` | 6 个（合批/遮挡剔除） |
+| render_wgpu | `hit_test.rs` | 10 个（命中检测/矩形包含/冒泡路径） |
+| render_wgpu | `event_loop.rs` | 8 个（动画帧调度） |
 | net | `fetch.rs` | 内联测试 |
 | net | `websocket.rs` | 内联测试 |
 | storage | `local_storage.rs` | 内联测试 |
@@ -397,9 +397,9 @@ storage      → dom
 | dom | 23 | 7 | 56 | Phase 2 完成，Phase 3 8 项待实现 |
 | style | 9 | 4 | 73 | Phase 2 完成，Phase 3 47 项待实现 |
 | layout | 9 | 4 | 23 | Phase 2 — 7 种布局模式 |
-| render_tree | 3 | 2 | 16 | Phase 1 — 合批优化 |
-| renderer | 8 | 1 | 25 | Phase 1 — HitTest/事件循环/观察者管理 |
-| toolchain | 8 | 4 | 60 | Phase 2 完成，Phase 3 116 项待实现 |
+| paint | 3 | 2 | 16 | Phase 1 — 合批优化 |
+| render_wgpu | 8 | 1 | 25 | Phase 1 — HitTest/事件循环/观察者管理 |
+| compiler | 8 | 4 | 60 | Phase 2 完成，Phase 3 116 项待实现 |
 | net | 2 | 0（内联） | 2 | Phase 2 完成，Phase 3 3 项待实现 |
 | storage | 2 | 0（内联） | 3 | Phase 2 完成 |
 | **合计** | **64** | **22（+ 内联）** | **258+** | **所有模块可工作** |

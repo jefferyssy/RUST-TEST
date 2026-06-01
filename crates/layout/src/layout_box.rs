@@ -263,7 +263,7 @@ impl LayoutBox {
 // Phase 2+: GridContainer, GridItem, Float 等布局类型
 
 #[cfg(test)]
-#[path = "layout_box.test.rs"]
+#[path = "../test/layout_box_test.rs"]
 mod tests;
 
 impl std::fmt::Debug for LayoutBox {

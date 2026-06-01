@@ -2,14 +2,15 @@
 resolver = "2"
 exclude = ["target"]
 members = [
-    "crates/dom",
-    "crates/style",
+    "crates/cli",
+    "crates/compiler",
     "crates/layout",
-    "crates/render_tree",
-    "crates/renderer",
-    "crates/toolchain",
-    "crates/net",
-    "crates/storage",
+    "crates/core/dom",
+    "crates/core/style",
+    "crates/render/paint",
+    "crates/render/render_wgpu",
+    "crates/platform/net",
+    "crates/platform/storage",
 ]
 
 [workspace.package]
@@ -18,11 +19,13 @@ edition = "2021"
 license = "MIT"
 
 [workspace.dependencies]
-dom = { path = "crates/dom" }
-style = { path = "crates/style" }
+dom = { path = "crates/core/dom" }
+style = { path = "crates/core/style" }
 layout = { path = "crates/layout" }
-render_tree = { path = "crates/render_tree" }
-renderer = { path = "crates/renderer" }
+paint = { path = "crates/render/paint" }
+render_wgpu = { path = "crates/render/render_wgpu" }
+compiler = { path = "crates/compiler" }
+cli = { path = "crates/cli" }
 
 wgpu = "23"
 winit = "0.30"

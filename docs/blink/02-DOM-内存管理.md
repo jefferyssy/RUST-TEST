@@ -11,7 +11,7 @@ DOM 树是浏览器的核心数据结构。它需要支持：
 
 ### 核心模式：Rc<RefCell<Node>>
 
-来源：[crates/dom/src/node.rs](../../crates/dom/src/node.rs)
+来源：[crates/core/dom/src/node.rs](../../crates/core/dom/src/node.rs)
 
 ```rust
 use std::cell::{Cell, RefCell};
@@ -80,7 +80,7 @@ impl Node {
 ### 树操作中的借用管理
 
 ```rust
-// append_child —— 来自 crates/dom/src/node.rs
+// append_child —— 来自 crates/core/dom/src/node.rs
 pub fn append_child(&mut self, child: Rc<RefCell<Node>>) {
     // 从原父节点移除
     {

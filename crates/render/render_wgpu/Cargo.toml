@@ -1,0 +1,20 @@
+[package]
+name = "render_wgpu"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+dom = { workspace = true }
+style = { workspace = true }
+layout = { workspace = true }
+paint = { workspace = true }
+wgpu = { workspace = true }
+winit = { workspace = true }
+rustybuzz = { workspace = true }
+fontdb = { workspace = true }
+ab_glyph = "0.2"
+pollster = "0.4"
+bytemuck = { version = "1.21", features = ["derive"] }
+tungstenite = { workspace = true }
+serde_json = { workspace = true }
+sha1 = { workspace = true }

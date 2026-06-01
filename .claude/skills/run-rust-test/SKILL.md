@@ -5,7 +5,7 @@ description: Build, test, and run this Rust browser engine's compiled demos. Use
 
 # Rust 浏览器引擎 — 运行与测试
 
-一个基于 Rust 的自研浏览器渲染管线项目，通过 `toolchain` CLI 将 HTML+CSS+JS 编译为原生桌面应用（winit + wgpu）。
+一个基于 Rust 的自研浏览器渲染管线项目，通过 `cli` 将 HTML+CSS+JS 编译为原生桌面应用（winit + wgpu）。
 
 ## 驱动脚本
 
@@ -18,7 +18,7 @@ description: Build, test, and run this Rust browser engine's compiled demos. Use
 ## 构建
 
 ```bash
-# 仅构建 toolchain CLI
+# 仅构建 cli
 bash .claude/skills/run-rust-test/smoke.sh build
 ```
 
@@ -30,7 +30,7 @@ bash .claude/skills/run-rust-test/smoke.sh build
 bash .claude/skills/run-rust-test/smoke.sh smoke
 ```
 
-流程：toolchain 编译 todo_app → cargo build → 启动运行 → 验证 wgpu 初始化 → 8 秒后自动终止。
+流程：cli 编译 todo_app → cargo build → 启动运行 → 验证 wgpu 初始化 → 8 秒后自动终止。
 
 ### 完整测试套件
 
@@ -38,7 +38,7 @@ bash .claude/skills/run-rust-test/smoke.sh smoke
 bash .claude/skills/run-rust-test/smoke.sh test
 ```
 
-等效于 `cargo test --workspace`，覆盖 DOM、Style、Layout、RenderTree、Renderer、Toolchain 等全部 268 个测试。
+等效于 `cargo test --workspace`，覆盖 DOM、Style、Layout、Paint、RenderWgpu、Compiler 等全部 268 个测试。
 
 ### 运行指定 demo
 
@@ -71,9 +71,9 @@ bash .claude/skills/run-rust-test/smoke.sh all
 cargo test -p dom         # DOM 核心
 cargo test -p style       # CSS 引擎
 cargo test -p layout      # 布局引擎
-cargo test -p render_tree # DisplayList 构建
-cargo test -p renderer    # wgpu 渲染 + 窗口
-cargo test -p toolchain   # 编译器
+cargo test -p paint # DisplayList 构建
+cargo test -p render_wgpu    # wgpu 渲染 + 窗口
+cargo test -p compiler   # 编译器
 ```
 
 ## 运行 (人类路径)
@@ -81,7 +81,7 @@ cargo test -p toolchain   # 编译器
 在有显示器的桌面环境上直接运行 demo：
 
 ```bash
-cargo run -p toolchain -- run examples/todo_app
+cargo run -p cli -- run examples/todo_app
 ```
 
 会弹出原生窗口，交互完成后关闭窗口即退出。
@@ -104,9 +104,9 @@ cargo run -p toolchain -- run examples/todo_app
 
 ## Gotchas
 
-- **toolchain 不支持 `--quiet`**：传递给 toolchain 的参数只能是其支持的（compile/run、-o、--name、--title、--width、--height）。
+- **cli 不支持 `--quiet`**：传递给 cli 的参数只能是其支持的（compile/run、-o、--name、--title、--width、--height）。
 - **GUI 应用不会自动退出**：必须用超时或发送 SIGTERM 终止。`smoke.sh` 使用 `sleep + kill` 模式处理。
-- **生成的代码在 `target/generated/<name>/`**：toolchain 的 `compile` 命令生成完整 Cargo 项目（含 Cargo.toml + src/main.rs），构建产物独立于 workspace。
+- **生成的代码在 `target/generated/<name>/`**：cli 的 `compile` 命令生成完整 Cargo 项目（含 Cargo.toml + src/main.rs），构建产物独立于 workspace。
 - **Windows 上 taskkill 路径**：`smoke.sh` 中包含 Windows 兼容的进程终止逻辑（`taskkill //F //PID`）。
 - **wgpu 在 headless 环境可能失败**：如果没有 GPU，wgpu 可能无法创建 adapter。在 CI 上建议仅运行 `cargo test`。
 
@@ -114,7 +114,7 @@ cargo run -p toolchain -- run examples/todo_app
 
 | 症状                     | 修复                                                                       |
 | ------------------------ | -------------------------------------------------------------------------- |
-| `toolchain compile` 失败 | 确认 `examples/<name>/` 目录存在且包含 `index.html`, `style.css`, `app.js` |
+| `cli compile` 失败 | 确认 `examples/<name>/` 目录存在且包含 `index.html`, `style.css`, `app.js` |
 | demo build 失败          | 检查 workspace crates 编译: `cargo check --workspace`                      |
 | wgpu init 日志未出现     | 确认有 GPU/wgpu 后端支持；在 headless 环境可能无输出                       |
 

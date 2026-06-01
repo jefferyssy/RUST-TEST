@@ -31,8 +31,8 @@
       "Bash(sleep 5 && cat /c/Users/shish/AppData/Local/Temp/claude/e--demoSpace-rust-test/1f99f55c-8944-4528-91a2-584ef2ddb360/tasks/bby5mtvsi.output)",
       "Read(//c/Users/shish/AppData/Local/Temp/claude/e--demoSpace-rust-test/1f99f55c-8944-4528-91a2-584ef2ddb360/tasks/**)",
       "Bash(cargo check *)",
-      "Bash(cp \"e:/demoSpace/rust-test/crates/render/src/\"*.rs \"e:/demoSpace/rust-test/crates/renderer/src/\")",
-      "Bash(cp \"e:/demoSpace/rust-test/crates/runtime/src/\"*.rs \"e:/demoSpace/rust-test/crates/renderer/src/\")",
+      "Bash(cp \"e:/demoSpace/rust-test/crates/render/src/\"*.rs \"e:/demoSpace/rust-test/crates/render/render_wgpu/src/\")",
+      "Bash(cp \"e:/demoSpace/rust-test/crates/runtime/src/\"*.rs \"e:/demoSpace/rust-test/crates/render/render_wgpu/src/\")",
       "Bash(cargo clean *)",
       "Bash(echo \"Exit: $?\")",
       "Bash(echo \"Build errors: $?\")",
@@ -56,7 +56,7 @@
       "Edit(/.claude/skills/run-rust-test/**)",
       "Bash(mkdir -p /tmp/taffy_check)",
       "Bash(tar xzf *)",
-      "Bash(DUMP_LAYOUT_TREE=1 cargo run -p toolchain -- compile examples/todo_app -o target/generated/todo_app_dump_test)",
+      "Bash(DUMP_LAYOUT_TREE=1 cargo run -p cli -- compile examples/todo_app -o target/generated/todo_app_dump_test)",
       "Bash(taskkill /f /im todo_app.exe)"
     ]
   }

@@ -42,11 +42,11 @@
 
 | 我们的模块 | Blink 对应组件 | 说明 |
 |-----------|---------------|------|
-| `crates/dom/` | `third_party/blink/renderer/core/dom/` | DOM 树与事件 |
-| `crates/style/` | `core/css/` + `core/style/` | CSS 解析与级联 |
+| `crates/core/dom/` | `third_party/blink/renderer/core/dom/` | DOM 树与事件 |
+| `crates/core/style/` | `core/css/` + `core/style/` | CSS 解析与级联 |
 | `crates/layout/` | `core/layout/` (LayoutNG) | 布局引擎 |
-| `crates/render_tree/` | `platform/graphics/paint/` | DisplayList |
-| `crates/renderer/` | `cc/` + `viz/` | 光栅化与合成 |
+| `crates/render/paint/` | `platform/graphics/paint/` | DisplayList |
+| `crates/render/render_wgpu/` | `cc/` + `viz/` | 光栅化与合成 |
 | `Rc<RefCell<Node>>` | `Member<Node>` (Oilpan GC) | 内存管理 |
 | `LayoutBox` (enum) | `LayoutObject` (继承体系) | 布局树节点 |
 | `PaintCommand` (enum) | `DisplayItem` (类体系) | 绘制命令 |

@@ -256,5 +256,5 @@ pub fn char_width_factor(c: char) -> f32 {
 }
 
 #[cfg(test)]
-#[path = "text.test.rs"]
+#[path = "../test/text_test.rs"]
 mod tests;

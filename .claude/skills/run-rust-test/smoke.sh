@@ -2,10 +2,10 @@
 # smoke.sh — Rust 浏览器引擎 Demo 构建与运行驱动
 #
 # 用法:
-#   .claude/skills/run-rust-test/smoke.sh build          # 仅构建 toolchain
+#   .claude/skills/run-rust-test/smoke.sh build          # 仅构建 cli
 #   .claude/skills/run-rust-test/smoke.sh test           # 运行完整测试套件
 #   .claude/skills/run-rust-test/smoke.sh demo <name>    # 编译并运行指定 demo
-#   .claude/skills/run-rust-test/smoke.sh smoke          # 快速冒烟：toolchain + todo_app
+#   .claude/skills/run-rust-test/smoke.sh smoke          # 快速冒烟：cli + todo_app
 #   .claude/skills/run-rust-test/smoke.sh all            # 全部：test + smoke + 所有 demo
 #
 # 环境变量:
@@ -24,15 +24,15 @@ red()  { echo -e "\033[31m$1\033[0m"; }
 green(){ echo -e "\033[32m$1\033[0m"; }
 cyan() { echo -e "\033[36m$1\033[0m"; }
 
-# ── 构建 toolchain ──
-build_toolchain() {
-    cyan ">>> 构建 toolchain CLI..."
+# ── 构建 cli ──
+build_cli() {
+    cyan ">>> 构建 cli..."
     cd "$PROJECT_ROOT"
-    cargo build -p toolchain --quiet 2>&1 || {
-        red "toolchain 构建失败"
+    cargo build -p cli --quiet 2>&1 || {
+        red "cli 构建失败"
         return 1
     }
-    green "   toolchain 构建成功"
+    green "   cli 构建成功"
 }
 
 # ── 运行测试套件 ──
@@ -57,13 +57,13 @@ run_demo() {
 
     cyan ">>> 编译 demo: $name"
 
-    # Step 1: toolchain 生成 Rust 项目
+    # Step 1: cli 生成 Rust 项目
     cd "$PROJECT_ROOT"
-    cargo run -p toolchain -- compile "$input_dir" \
+    cargo run -p cli -- compile "$input_dir" \
         -o "$output_dir" \
         --name "$name" \
         --title "Demo: $name" \
-        --width 400 --height 500 2>&1 || { red "toolchain compile 失败"; return 1; }
+        --width 400 --height 500 2>&1 || { red "cli compile 失败"; return 1; }
 
     # Step 2: cargo build
     cargo build --manifest-path "$output_dir/Cargo.toml" --quiet 2>&1 || {
@@ -103,9 +103,9 @@ run_demo() {
     rm -f "$logfile"
 }
 
-# ── 冒烟测试：toolchain + todo_app ──
+# ── 冒烟测试：cli + todo_app ──
 smoke() {
-    build_toolchain
+    build_cli
     run_demo "todo_app"
     green ">>> 冒烟测试完成"
 }
@@ -113,7 +113,7 @@ smoke() {
 # ── 全部：test + 所有 demo ──
 all() {
     run_tests
-    build_toolchain
+    build_cli
     for demo in "${DEMOS[@]}"; do
         if [ -d "$PROJECT_ROOT/examples/$demo" ]; then
             run_demo "$demo" || echo "   (demo '$demo' 失败，继续下一个)"
@@ -125,7 +125,7 @@ all() {
 # ── main ──
 case "${1:-}" in
     build)
-        build_toolchain
+        build_cli
         ;;
     test)
         run_tests
@@ -136,7 +136,7 @@ case "${1:-}" in
             echo "可用 demo: ${DEMOS[*]}"
             exit 1
         fi
-        build_toolchain
+        build_cli
         run_demo "$2"
         ;;
     smoke)
@@ -148,10 +148,10 @@ case "${1:-}" in
     *)
         echo "用法: smoke.sh {build|test|demo <name>|smoke|all}"
         echo ""
-        echo "  build        构建 toolchain CLI"
+        echo "  build        构建 cli"
         echo "  test         运行 cargo test --workspace"
         echo "  demo <name>  编译并运行指定 demo (todo_app, counter, etc.)"
-        echo "  smoke        快速冒烟: toolchain + todo_app"
+        echo "  smoke        快速冒烟: cli + todo_app"
         echo "  all          全部: test + 所有 demo"
         echo ""
         echo "可用 demo: ${DEMOS[*]}"

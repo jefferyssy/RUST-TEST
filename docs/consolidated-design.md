@@ -9,7 +9,7 @@
 
 将原生 HTML+CSS+JS 前端项目编译为 Rust 代码，通过自研 W3C 标准 DOM API 驱动渲染管线，输出原生跨平台应用。
 
-**数据流**: `index.html + style.css + app.js → toolchain 编译器 → Rust 代码 → cargo build → 原生二进制`
+**数据流**: `index.html + style.css + app.js → compiler → Rust 代码 → cargo build → 原生二进制`
 
 ---
 
@@ -19,7 +19,7 @@
 HTML+CSS+JS 源文件
       │
       ▼
-[toolchain] 命令工具 — HTML/CSS/JS → Rust 代码编译
+[cli] 命令工具 — HTML/CSS/JS → Rust 代码编译
       │
       ▼
 [dom] DOM 树构建 + 事件系统 + MutationObserver
@@ -31,10 +31,10 @@ HTML+CSS+JS 源文件
 [layout] 布局计算 — Flex/Block/Grid/Table/Positioned/Float/Inline
       │
       ▼
-[render_tree] 渲染树 — DisplayList 构建 + 批处理优化
+[paint] 渲染树 — DisplayList 构建 + 批处理优化
       │
       ▼
-[renderer] 最终渲染 — wgpu GPU 后端 + winit 窗口 + 事件循环 + HitTest
+[render_wgpu] 最终渲染 — wgpu GPU 后端 + winit 窗口 + 事件循环 + HitTest
       │
       ▼
 [屏幕]
@@ -46,11 +46,11 @@ HTML+CSS+JS 源文件
 
 | Crate | 职责 | 源文件 | 测试数 |
 |-------|------|--------|--------|
-| `toolchain` | HTML/CSS/JS 编译器 | 7 | ~50 |
+| `compiler` | HTML/CSS/JS 编译器 | 7 | ~50 |
 | `dom` | W3C DOM (Node/Element/Document/Event/HTML 元素/Observer) | 22 | ~50 |
 | `style` | CSS 引擎 (选择器/级联/值类型/动画/过渡/媒体查询) | 9 | ~70 |
 | `layout` | 布局引擎 (Flex/Block/Grid/Table/Positioned/Float/Inline) | 9 | ~25 |
-| `render_tree` | DisplayList + BatchOptimizer | 3 | ~15 |
+| `paint` | DisplayList + BatchOptimizer | 3 | ~15 |
 | `renderer` | wgpu + winit + HitTest + AnimationFrameScheduler | 8 | ~25 |
 | `net` | fetch + WebSocket | 2 | ~10 |
 | `storage` | localStorage / sessionStorage | 2 | ~10 |
@@ -60,7 +60,7 @@ HTML+CSS+JS 源文件
 
 ## 三、已完成
 
-### 3.1 toolchain — 编译器
+### 3.1 compiler — 编译器
 
 | 已完成 | 说明 |
 |--------|------|
@@ -135,7 +135,7 @@ HTML+CSS+JS 源文件
 | 核心类型 | LayoutBox (BoxType/EdgeSizes/Overflow/BorderRadius/Visibility), Rect, Size |
 | Viewport | DOM Size 作为布局视口 + vw/vh/% 单位解析 |
 
-### 3.5 render_tree — 渲染树
+### 3.5 paint — 渲染树
 
 | 已完成 | 说明 |
 |--------|------|
@@ -245,18 +245,18 @@ HTML+CSS+JS 源文件
 | P0-3 | CSS 选择器 | `:has()` / `:is()` / `:where()` 伪类 | `style/src/selector.rs` |
 | P0-4 | CSS 选择器 | `::before` / `::after` 伪元素 | `style/src/selector.rs`, `layout/` |
 | P0-5 | CSS 函数 | `min()` / `max()` / `clamp()` | `style/src/values.rs` |
-| P0-6 | JS String | `str.replace()` / `str.replaceAll()` | `toolchain/src/codegen.rs` |
-| P0-7 | JS String | `str.toUpperCase()` / `str.toLowerCase()` | `toolchain/src/codegen.rs` |
-| P0-8 | JS String | `str.indexOf()` / `str.lastIndexOf()` | `toolchain/src/codegen.rs` |
-| P0-9 | JS Array | `arr.sort()` / `arr.reverse()` | `toolchain/src/codegen.rs` |
-| P0-10 | JS Array | `arr.forEach()` / `arr.some()` / `arr.every()` | `toolchain/src/codegen.rs` |
-| P0-11 | JS Array | `arr.concat()` / `arr.findIndex()` | `toolchain/src/codegen.rs` |
-| P0-12 | JS RegExp | 正则表达式: `/pattern/flags` 字面量、`.test()`、`.exec()`、`/g`、`/i` | `toolchain/src/codegen.rs` |
-| P0-13 | JS Date | Date 对象全套: `new Date()`、`getTime()`、`getFullYear/Month/Date`、`getHours/Minutes/Seconds`、`getDay()`、`toISOString()`、`toJSON()` | `toolchain/src/codegen.rs` |
-| P0-14 | JS Object | `Object.create()` / `defineProperty()` / `freeze()` / `seal()` / `is()` / `hasOwn()` / `fromEntries()` / `getPrototypeOf()` / `setPrototypeOf()` | `toolchain/src/codegen.rs` |
-| P0-15 | JS SPA | History API: `pushState`/`replaceState`/`back`/`forward`/`go`/`length`/`state`/`popstate` 事件 | `renderer/src/`, `toolchain/` |
-| P0-16 | JS SPA | Location API: `href`/`host`/`hostname`/`pathname`/`search`/`hash`/`protocol`/`origin`/`port`/`assign`/`replace`/`reload` | `renderer/src/`, `toolchain/` |
-| P0-17 | JS SPA | URL/URLSearchParams: `new URL()` / `searchParams` / `params.get/set/has/delete/toString/forEach` | `toolchain/src/codegen.rs` |
+| P0-6 | JS String | `str.replace()` / `str.replaceAll()` | `compiler/src/codegen.rs` |
+| P0-7 | JS String | `str.toUpperCase()` / `str.toLowerCase()` | `compiler/src/codegen.rs` |
+| P0-8 | JS String | `str.indexOf()` / `str.lastIndexOf()` | `compiler/src/codegen.rs` |
+| P0-9 | JS Array | `arr.sort()` / `arr.reverse()` | `compiler/src/codegen.rs` |
+| P0-10 | JS Array | `arr.forEach()` / `arr.some()` / `arr.every()` | `compiler/src/codegen.rs` |
+| P0-11 | JS Array | `arr.concat()` / `arr.findIndex()` | `compiler/src/codegen.rs` |
+| P0-12 | JS RegExp | 正则表达式: `/pattern/flags` 字面量、`.test()`、`.exec()`、`/g`、`/i` | `compiler/src/codegen.rs` |
+| P0-13 | JS Date | Date 对象全套: `new Date()`、`getTime()`、`getFullYear/Month/Date`、`getHours/Minutes/Seconds`、`getDay()`、`toISOString()`、`toJSON()` | `compiler/src/codegen.rs` |
+| P0-14 | JS Object | `Object.create()` / `defineProperty()` / `freeze()` / `seal()` / `is()` / `hasOwn()` / `fromEntries()` / `getPrototypeOf()` / `setPrototypeOf()` | `compiler/src/codegen.rs` |
+| P0-15 | JS SPA | History API: `pushState`/`replaceState`/`back`/`forward`/`go`/`length`/`state`/`popstate` 事件 | `render_wgpu/src/`, `compiler/` |
+| P0-16 | JS SPA | Location API: `href`/`host`/`hostname`/`pathname`/`search`/`hash`/`protocol`/`origin`/`port`/`assign`/`replace`/`reload` | `render_wgpu/src/`, `compiler/` |
+| P0-17 | JS SPA | URL/URLSearchParams: `new URL()` / `searchParams` / `params.get/set/has/delete/toString/forEach` | `compiler/src/codegen.rs` |
 
 ### P1 — 重要扩展
 
@@ -268,20 +268,20 @@ HTML+CSS+JS 源文件
 | P1-4 | DOM Node | `node.hasChildNodes()` / `node.isSameNode()` | `dom/src/node.rs` |
 | P1-5 | DOM Document | `document.cookie` | `dom/src/document.rs` |
 | P1-6 | CSS 布局 | `aspect-ratio` / `contain` / `content-visibility` | `style/src/properties.rs`, `layout/` |
-| P1-7 | CSS 变换 | 3D 变换: `perspective` / `transform-style` / `backface-visibility` / `translateZ` / `rotate3d` / `scale3d` / `matrix3d` | `style/`, `renderer/` |
-| P1-8 | CSS 滤镜 | `backdrop-filter` | `style/src/properties.rs`, `renderer/` |
+| P1-7 | CSS 变换 | 3D 变换: `perspective` / `transform-style` / `backface-visibility` / `translateZ` / `rotate3d` / `scale3d` / `matrix3d` | `style/`, `render_wgpu/` |
+| P1-8 | CSS 滤镜 | `backdrop-filter` | `style/src/properties.rs`, `render_wgpu/` |
 | P1-9 | CSS 过渡 | `cubic-bezier()` / `steps()` 缓动函数 | `style/src/transitions.rs` |
 | P1-10 | CSS 函数 | `radial-gradient()` / `currentColor` / `circle()`/`ellipse()`/`polygon()`/`inset()` (clip-path) | `style/src/values.rs` |
 | P1-11 | CSS 排版 | `font-variant` / `font-stretch` / `word-break` / `overflow-wrap` | `style/src/properties.rs` |
 | P1-12 | CSS At-Rule | `@import` | `style/src/stylesheet.rs` |
-| P1-13 | JS 语法 | `var` 声明、`++/--` 自增自减、`instanceof`、位运算 `&|^~<<>>>>>` | `toolchain/src/codegen.rs` |
-| P1-14 | JS Number | `Number.isInteger()` / `Number.toFixed()` | `toolchain/src/builtins.rs` |
-| P1-15 | JS Math | `Math.sqrt()` / `Math.pow()` | `toolchain/src/builtins.rs` |
-| P1-16 | JS String | `str.trimStart()` / `str.trimEnd()` / `str.match()` / `str.search()` | `toolchain/src/codegen.rs` |
-| P1-17 | JS Array | `Array.of()` / `arr.indexOf()` | `toolchain/src/codegen.rs` |
-| P1-18 | JS Promise | `Promise.allSettled()` / `Promise.any()` | `toolchain/src/codegen.rs` |
-| P1-19 | JS Timer | `queueMicrotask()` | `renderer/src/event_loop.rs` |
-| P1-20 | JS Canvas | Canvas 2D 核心: `fillRect`/`strokeRect`/`clearRect`/`fillStyle`/`strokeStyle`/`lineWidth`/`globalAlpha`/`beginPath`/`moveTo`/`lineTo`/`rect`/`arc`/`fill`/`stroke`/`save`/`restore`/`translate`/`rotate`/`scale`/`setTransform`/`fillText`/`font`/`textAlign`/`measureText`/`drawImage`/`toDataURL` | `renderer/src/`, `dom/src/html/canvas.rs`, `toolchain/src/canvas_codegen.rs` |
+| P1-13 | JS 语法 | `var` 声明、`++/--` 自增自减、`instanceof`、位运算 `&|^~<<>>>>>` | `compiler/src/codegen.rs` |
+| P1-14 | JS Number | `Number.isInteger()` / `Number.toFixed()` | `compiler/src/builtins.rs` |
+| P1-15 | JS Math | `Math.sqrt()` / `Math.pow()` | `compiler/src/builtins.rs` |
+| P1-16 | JS String | `str.trimStart()` / `str.trimEnd()` / `str.match()` / `str.search()` | `compiler/src/codegen.rs` |
+| P1-17 | JS Array | `Array.of()` / `arr.indexOf()` | `compiler/src/codegen.rs` |
+| P1-18 | JS Promise | `Promise.allSettled()` / `Promise.any()` | `compiler/src/codegen.rs` |
+| P1-19 | JS Timer | `queueMicrotask()` | `render_wgpu/src/event_loop.rs` |
+| P1-20 | JS Canvas | Canvas 2D 核心: `fillRect`/`strokeRect`/`clearRect`/`fillStyle`/`strokeStyle`/`lineWidth`/`globalAlpha`/`beginPath`/`moveTo`/`lineTo`/`rect`/`arc`/`fill`/`stroke`/`save`/`restore`/`translate`/`rotate`/`scale`/`setTransform`/`fillText`/`font`/`textAlign`/`measureText`/`drawImage`/`toDataURL` | `render_wgpu/src/`, `dom/src/html/canvas.rs`, `compiler/src/canvas_codegen.rs` |
 
 ### P2 — 触控与移动端
 
@@ -323,7 +323,7 @@ HTML+CSS+JS 源文件
 
 ## 六、文件级状态速查
 
-### toolchain/
+### compiler/
 
 | 文件 | 状态 | 说明 |
 |------|------|------|
@@ -369,11 +369,11 @@ HTML+CSS+JS 源文件
 
 7 种布局模式均已完成: Flex/Block/Grid/Table/Positioned/Float/Inline + TextMeasurer
 
-### render_tree/ — 全部 ✅
+### paint/ — 全部 ✅
 
 DisplayList + DisplayListBuilder + BatchOptimizer 均已完成
 
-### renderer/
+### render_wgpu/
 
 | 文件 | 状态 | 说明 |
 |------|------|------|

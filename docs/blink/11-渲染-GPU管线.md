@@ -13,7 +13,7 @@
 
 ### 技术栈：wgpu + winit + WGSL
 
-来源：[crates/renderer/src/wgpu_backend.rs](../../crates/renderer/src/wgpu_backend.rs)
+来源：[crates/render/render_wgpu/src/wgpu_backend.rs](../../crates/render/render_wgpu/src/wgpu_backend.rs)
 
 ```
 winit (窗口 + 事件) → wgpu (GPU 抽象) → DX12 / Vulkan / Metal / WebGPU
@@ -143,7 +143,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
 ### 字形渲染
 
-来源：[crates/renderer/src/text_renderer.rs](../../crates/renderer/src/text_renderer.rs)
+来源：[crates/render/render_wgpu/src/text_renderer.rs](../../crates/render/render_wgpu/src/text_renderer.rs)
 
 ```rust
 // TextRenderer 使用 ab_glyph 将字形光栅化到纹理图集

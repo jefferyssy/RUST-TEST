@@ -14,7 +14,7 @@ CSS 选择器匹配是样式计算的前序步骤。给定一组样式表（每�
 
 ### 匹配策略：从左向右 + 全表遍历
 
-来源：[crates/style/src/selector.rs](../../crates/style/src/selector.rs)
+来源：[crates/core/style/src/selector.rs](../../crates/core/style/src/selector.rs)
 
 ```rust
 /// 针对单个元素的匹配：找出所有匹配的规则声明

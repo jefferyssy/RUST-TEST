@@ -1,0 +1,9 @@
+[package]
+name = "paint"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+dom = { workspace = true }
+style = { workspace = true }
+layout = { workspace = true }

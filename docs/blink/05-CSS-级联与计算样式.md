@@ -13,7 +13,7 @@ CSS 级联（Cascade）的核心任务是：从多个来源（UA 默认、作者
 
 ### ComputedStyle：HashMap 设计
 
-来源：[crates/style/src/cascade.rs](../../crates/style/src/cascade.rs)
+来源：[crates/core/style/src/cascade.rs](../../crates/core/style/src/cascade.rs)
 
 ```rust
 /// 计算后的样式集合

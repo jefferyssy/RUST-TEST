@@ -14,7 +14,7 @@
 
 ### PaintCommand：单一枚举类型
 
-来源：[crates/render_tree/src/command.rs](../../crates/render_tree/src/command.rs)
+来源：[crates/render/paint/src/command.rs](../../crates/render/paint/src/command.rs)
 
 ```rust
 pub enum PaintCommand {
@@ -71,7 +71,7 @@ impl DisplayList {
 
 ### DisplayListBuilder：布局树遍历 → 命令生成
 
-来源：[crates/render_tree/src/builder.rs](../../crates/render_tree/src/builder.rs)
+来源：[crates/render/paint/src/builder.rs](../../crates/render/paint/src/builder.rs)
 
 ```rust
 impl DisplayListBuilder {

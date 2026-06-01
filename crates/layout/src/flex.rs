@@ -379,4 +379,6 @@ fn is_border_box_style(cs: &ComputedStyle) -> bool {
     }
 }
 
-// Phase 2+: Grid 布局
+#[cfg(test)]
+#[path = "../test/flex_test.rs"]
+mod tests;

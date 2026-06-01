@@ -148,5 +148,5 @@ impl PositionedLayout {
 }
 
 #[cfg(test)]
-#[path = "positioned.test.rs"]
+#[path = "../test/positioned_test.rs"]
 mod tests;

@@ -118,5 +118,5 @@ pub fn is_bfc_container(node: &LayoutBox) -> bool {
 }
 
 #[cfg(test)]
-#[path = "block.test.rs"]
+#[path = "../test/block_test.rs"]
 mod tests;

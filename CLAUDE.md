@@ -6,44 +6,57 @@
 
 数据流：`index.html + style.css + app.js → 编译器 → Rust 代码 → cargo build → 原生二进制`
 
-Phase 0 目标：Rust 运行时（DOM API + CSS 引擎 + 布局 + wgpu 渲染）+ web2rust 编译器均可工作，demo 展示"从 HTML+CSS+JS 源文件编译为 Rust"的完整流程。
-
 ## 构建与运行
 
 ```bash
 # 运行所有测试
 cargo test
 
-# 运行 counter demo
-RUST_LOG=wgpu=warn cargo run -p counter
-
 # 运行特定 crate 测试
 cargo test -p dom
-cargo test -p css
+cargo test -p style
 cargo test -p layout
 cargo test -p paint
-cargo test -p web2rust
+cargo test -p render_wgpu
+cargo test -p compiler
+cargo test -p net
+cargo test -p storage
+
+# 用 CLI 编译并运行 demo
+cargo run -p cli -- run examples/counter
+
+# 或手动编译
+cargo run -p cli -- compile examples/counter -o target/generated/counter
+cargo run --manifest-path target/generated/counter/Cargo.toml
 ```
 
 ## 工作区结构
 
 ```
 crates/
-├── dom/        # 核心 DOM 树 + W3C 标准 API（无依赖）
-├── css/        # CSS 引擎（cssparser + 选择器 + 级联）
-├── layout/     # 布局引擎（taffy flexbox + 自研 block）
-├── paint/      # DisplayList 构建（LayoutTree → 绘制命令）
-├── render/     # wgpu 渲染后端
-├── runtime/    # 整合入口 + winit 事件循环
-├── web2rust/   # 编译器：HTML+CSS+JS → Rust DOM API 代码
+├── cli/                # 1.命令行工具
+├── compiler/           # 2.编译模块（HTML+CSS+JS → Rust 代码）
+├── core/               # 3.核心功能
+│   ├── dom/            #   DOM 树 + W3C 标准 API（无依赖）
+│   └── style/          #   CSS 引擎（值/选择器/级联/动画）
+├── layout/             # 4.布局引擎（flexbox + block）
+├── render/             # 5.渲染
+│   ├── paint/          #   DisplayList 构建 + 优化
+│   └── render_wgpu/    #   wgpu GPU 后端 + winit 窗口
+└── platform/           # 6.平台支撑
+    ├── net/            #   网络（fetch + WebSocket）
+    └── storage/        #   存储（localStorage + sessionStorage）
 examples/
-├── counter/       # 计数器 Demo — 源文件驱动
-├── two-counters/  # 双计数器 Demo — 多独立状态
-├── flex-nav/      # Flex 导航栏 Demo — flexbox 布局验证
-└── dashboard/     # 仪表盘 Demo — 复杂布局
+├── counter/            # 计数器 Demo
+├── two-counters/       # 双计数器 Demo
+├── flex-nav/           # Flex 导航栏 Demo
+├── dashboard/          # 仪表盘 Demo
+└── todo_app/           # Todo 应用 Demo
 ```
 
-Crate 依赖链：`dom → css → layout → paint → render → runtime`（web2rust 是独立编译器，仅作 build-dependency）
+Crate 依赖链：`core/dom → core/style → layout → render/paint → render/render_wgpu`
+
+`compiler` 是独立编译工具，不参与渲染管线。`cli` 调用 `compiler` 生成 Rust 代码。
 
 ## 编译器管线
 
@@ -67,7 +80,7 @@ app.js     ─→ swc        ─→ Rust DOM API 调用 + 事件监听器
                        generated.rs → cargo build → 原生二进制
 ```
 
-### Phase 0 web2rust 支持的 JS 模式
+### Phase 0 compiler 支持的 JS 模式
 
 - `document.querySelector('.class')` / `document.querySelector('#id')` — 在 HTML 元素树中查找
 - `document.getElementById('id')` — 同上
@@ -87,18 +100,18 @@ Phase 1+ 将替换为基于 swc 的完整 JS AST 编译。
 
 ## Demo 结构说明
 
-counter demo 通过 `build.rs` 在构建时调用 web2rust 编译器，将源文件编译为 Rust 代码：
+counter demo 通过 `build.rs` 在构建时调用 compiler，将源文件编译为 Rust 代码：
 
 - **index.html** — 标准 HTML5 文档结构（`<div>`, `<h1>`, `<button>`）
 - **style.css** — 标准 CSS 规则（背景色、字体、边距、边框）
 - **app.js** — 标准 JS 交互（`querySelector`, `getElementById`, `addEventListener`）
-- **build.rs** — 构建脚本，调用 `web2rust::compile_body()` 生成 Rust 代码
+- **build.rs** — 构建脚本，调用 `compiler::compile_body()` 生成 Rust 代码
 - **src/main.rs** — 仅通过 `include!` 引入构建产物，调用 `generated::run()`
 
 构建流程：
 
-1. cargo 编译 web2rust（build-dependency）
-2. `build.rs` 执行 → web2rust 读取 `index.html` + `style.css` + `app.js` → 生成 `$OUT_DIR/counter_generated.rs`
+1. cargo 编译 compiler（build-dependency）
+2. `build.rs` 执行 → compiler 读取 `index.html` + `style.css` + `app.js` → 生成 `$OUT_DIR/counter_generated.rs`
 3. `src/main.rs` 通过 `mod generated { include!(...) }` 引入生成的代码
 4. cargo 编译成品 → 原生二进制
 
@@ -139,7 +152,7 @@ Node 提供 `set_style()`、`add_event_listener()`、`remove_event_listener()`�
 
 ### 测试
 
-- 所有测试均为内联 `#[cfg(test)] mod tests`，写在每个源文件末尾
+- 所有测试均为内联 `#[cfg(test)] mod tests`，写在每个源文件末尾，或通过 `#[path = "../test/xxx_test.rs"]` 引用外部测试文件
 - 使用 `use super::*` 访问私有项
 - helper 函数定义在测试模块内
 - doc-test 如果启动窗口需加 `no_run` 避免阻塞
@@ -148,7 +161,7 @@ Node 提供 `set_style()`、`add_event_listener()`、`remove_event_listener()`�
 
 代码中用 `// Phase 0:` / `// Phase 1+:` / `// Phase 2+:` 注释标记当前状态和未来计划。
 
-## 渲染管线（runtime::window → App::render）
+## 渲染管线（render_wgpu::window → App::render）
 
 1. **compute_dom_styles** — 递归遍历 DOM，对每个元素匹配样式表 + 解析 inline style，输出 `HashMap<usize, ComputedStyle>`（key 为 `Rc::as_ptr(node) as usize`）
 2. **build_layout_tree** — 从 DOM 树 + ComputedStyle 构建 LayoutBox 树，确定 BoxType（Block/FlexContainer/Inline/Text）
@@ -169,7 +182,7 @@ Node 提供 `set_style()`、`add_event_listener()`、`remove_event_listener()`�
 - **values**: CSSValue 枚举（Keyword/Length/Color/Percentage/Number/String），`parse_css_value(property, value)` 入口
 - **selector**: Phase 0 手写实现，支持 `tag`, `.class`, `#id`, `tag.class#id` 匹配；`compute_specificity` 返回 `(id, class, tag)` 元组
 - **cascade**: `compute_element_style` 按特异性排序 + `!important` 处理 + 继承属性传播
-- **stylesheet**: `parse_stylesheet()` 当前为 stub（Phase 1+ 集成 cssparser）；`parse_inline_style` 可用
+- **stylesheet**: `parse_stylesheet()`，`parse_inline_style` 可用
 - **特异性**: `!important` > inline（`u32::MAX`） > 选择器匹配；元组比较 `(id, class, tag)`
 
 ## 常见陷阱

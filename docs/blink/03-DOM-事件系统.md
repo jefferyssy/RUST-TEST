@@ -14,7 +14,7 @@ DOM 事件系统需要支持 W3C EventTarget 接口：`addEventListener`、`remo
 
 ### 事件存储：内联 HashMap
 
-来源：[crates/dom/src/element.rs](../../crates/dom/src/element.rs#L15)
+来源：[crates/core/dom/src/element.rs](../../crates/core/dom/src/element.rs#L15)
 
 ```rust
 pub struct ElementData {
@@ -74,7 +74,7 @@ impl ElementData {
 
 ### 事件派发（三阶段传播）
 
-来源：[crates/dom/src/event.rs](../../crates/dom/src/event.rs#L153)
+来源：[crates/core/dom/src/event.rs](../../crates/core/dom/src/event.rs#L153)
 
 ```rust
 impl EventDispatcher {
