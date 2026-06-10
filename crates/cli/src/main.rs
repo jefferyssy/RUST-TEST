@@ -208,5 +208,5 @@ fn cmd_run(args: &Args) {
 }
 
 #[cfg(test)]
-#[path = "../test/main.test.rs"]
+#[path = "test/main.test.rs"]
 mod tests;
