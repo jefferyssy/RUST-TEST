@@ -21,6 +21,7 @@ pub mod canvas_codegen;
 
 use std::collections::HashMap;
 use std::fs;
+use std::path::{Path, PathBuf};
 
 pub use html::HtmlElement;
 pub use parser::{Parser, CompilationUnit, SourceFile, SourceKind};
@@ -365,6 +366,190 @@ pub fn compile_body_to_file(html_path: &str, css_path: &str, js_path: &str, outp
     }
     fs::write(output_path, &code)
         .unwrap_or_else(|e| panic!("Cannot write output '{}': {}", output_path, e));
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 项目级编译 API（从 CLI 移入）
+// ═══════════════════════════════════════════════════════════════════
+
+/// `compile_project` 的输出。
+pub struct CompileProjectOutput {
+    /// 生成的 Rust 源代码（完整 main.rs）
+    pub rust_code: String,
+    /// 找到的 HTML 文件路径
+    pub html_path: PathBuf,
+    /// 使用的 CSS 文件路径
+    pub css_path: Option<PathBuf>,
+    /// 使用的 JS 文件路径
+    pub js_path: Option<PathBuf>,
+}
+
+/// 从项目目录编译：找 HTML → 提取引用 → 读 CSS/JS → 编译。
+///
+/// `input_dir` 应包含 HTML/CSS/JS 源文件。
+/// 优先使用 index.html，否则使用第一个 .html 文件。
+/// CSS/JS 从 HTML 的 `<link>`/`<script>` 标签中提取。
+pub fn compile_project(
+    input_dir: &Path,
+    opts: &CompileOptions,
+) -> Result<CompileProjectOutput, String> {
+    // 1. 找 HTML 入口
+    let html_path = find_html_file(input_dir)?;
+
+    // 2. 读 HTML 并提取 CSS/JS 引用
+    let html_src = fs::read_to_string(&html_path)
+        .map_err(|e| format!("cannot read {}: {e}", html_path.display()))?;
+    let (css_refs, js_refs) = html::extract_references(&html_src);
+
+    // 3. 解析 CSS/JS 路径
+    let css_path = resolve_ref(input_dir, &css_refs, "CSS");
+    let js_path = resolve_ref(input_dir, &js_refs, "JS");
+
+    // 4. 生成 Rust 代码
+    let css_path_str = css_path
+        .as_ref()
+        .map_or(String::new(), |p| p.to_string_lossy().to_string());
+    let js_path_str = js_path
+        .as_ref()
+        .map_or(String::new(), |p| p.to_string_lossy().to_string());
+    let rust_code = compile_with_options(
+        &html_path.to_string_lossy(),
+        &css_path_str,
+        &js_path_str,
+        opts,
+    );
+
+    Ok(CompileProjectOutput {
+        rust_code,
+        html_path,
+        css_path,
+        js_path,
+    })
+}
+
+/// 编译项目并写入输出目录（创建完整的 Cargo 项目）。
+///
+/// 输出目录将包含 `src/main.rs` 和 `Cargo.toml`。
+/// `workspace_root` 用于计算 Cargo.toml 中依赖 crate 的相对路径。
+pub fn compile_project_to_dir(
+    input_dir: &Path,
+    output_dir: &Path,
+    name: &str,
+    workspace_root: &Path,
+    opts: &CompileOptions,
+) -> Result<(), String> {
+    let output = compile_project(input_dir, opts)?;
+
+    // 创建输出目录
+    let src_dir = output_dir.join("src");
+    fs::create_dir_all(&src_dir)
+        .map_err(|e| format!("cannot create {}: {e}", src_dir.display()))?;
+
+    // 写 main.rs
+    fs::write(src_dir.join("main.rs"), &output.rust_code)
+        .map_err(|e| format!("cannot write main.rs: {e}"))?;
+
+    // 写 Cargo.toml
+    let renderer_rel = rel_path(
+        output_dir,
+        &workspace_root.join("crates").join("renderer"),
+    );
+    let dom_rel = rel_path(output_dir, &workspace_root.join("crates").join("dom"));
+    let cargo_toml = format!(
+        "[workspace]\n\
+         \n\
+         [package]\n\
+         name = \"{name}\"\n\
+         version = \"0.1.0\"\n\
+         edition = \"2021\"\n\
+         \n\
+         [dependencies]\n\
+         renderer = {{ path = \"{renderer_rel}\" }}\n\
+         dom = {{ path = \"{dom_rel}\" }}\n",
+    );
+    fs::write(output_dir.join("Cargo.toml"), &cargo_toml)
+        .map_err(|e| format!("cannot write Cargo.toml: {e}"))?;
+
+    Ok(())
+}
+
+// ── 内部工具函数 ──
+
+/// 在目录中找 HTML 入口文件：优先 index.html，否则第一个 .html。
+fn find_html_file(dir: &Path) -> Result<PathBuf, String> {
+    let default = dir.join("index.html");
+    if default.exists() {
+        return Ok(default);
+    }
+    find_file_by_ext(dir, "html").ok_or_else(|| format!("no .html file found in {}", dir.display()))
+}
+
+/// 在目录中按扩展名查找第一个匹配的文件。
+fn find_file_by_ext(dir: &Path, ext: &str) -> Option<PathBuf> {
+    let mut matches: Vec<PathBuf> = fs::read_dir(dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_file())
+        .filter(|p| p.extension().map(|e| e.to_str()) == Some(Some(ext)))
+        .collect();
+    matches.sort();
+    matches.into_iter().next()
+}
+
+/// 从 HTML 提取的文件引用列表中解析第一个存在的文件路径。
+fn resolve_ref(input_dir: &Path, refs: &[String], label: &str) -> Option<PathBuf> {
+    if refs.is_empty() {
+        eprintln!("warning: no {label} file referenced in HTML");
+        return None;
+    }
+    for r in refs {
+        let candidate = input_dir.join(r);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+        eprintln!("warning: {label} file not found: {}", candidate.display());
+    }
+    eprintln!("warning: no {label} file found for references: {:?}", refs);
+    None
+}
+
+/// 计算从一个目录到另一个路径的相对路径（始终使用正斜杠）。
+fn rel_path(from: &Path, to: &Path) -> String {
+    let from_abs = from.canonicalize().unwrap_or_else(|_| {
+        if let Some(parent) = from.parent() {
+            if let Ok(parent_abs) = parent.canonicalize() {
+                return parent_abs.join(from.file_name().unwrap_or_default());
+            }
+        }
+        from.to_path_buf()
+    });
+
+    let to_abs = to.canonicalize().unwrap_or_else(|_| to.to_path_buf());
+
+    let from_parts: Vec<_> = from_abs.components().collect();
+    let to_parts: Vec<_> = to_abs.components().collect();
+
+    let common = from_parts
+        .iter()
+        .zip(to_parts.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+
+    let up_count = from_parts.len() - common;
+    let mut result = String::new();
+    for _ in 0..up_count {
+        result.push_str("../");
+    }
+    for comp in &to_parts[common..] {
+        result.push_str(&comp.as_os_str().to_string_lossy());
+        result.push('/');
+    }
+    if result.ends_with('/') {
+        result.pop();
+    }
+
+    result.replace('\\', "/")
 }
 
 #[cfg(test)]

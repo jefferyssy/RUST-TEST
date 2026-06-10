@@ -152,8 +152,15 @@ Node 提供 `set_style()`、`add_event_listener()`、`remove_event_listener()`�
 
 ### 测试
 
-- 所有测试均为内联 `#[cfg(test)] mod tests`，写在每个源文件末尾，或通过 `#[path = "../test/xxx_test.rs"]` 引用外部测试文件
-- 使用 `use super::*` 访问私有项
+- 测试文件统一放在 `**/test/` 目录，命名规则为 `<原名>.test.rs`
+  - 例如 `src/main.rs` → `src/test/main.test.rs`，`src/lib.rs` → `src/test/lib.test.rs`
+- 源文件中通过 `#[path]` 属性引用：
+  ```rust
+  #[cfg(test)]
+  #[path = "test/main.test.rs"]
+  mod tests;
+  ```
+- 测试文件使用 `use super::*;` 访问私有项
 - helper 函数定义在测试模块内
 - doc-test 如果启动窗口需加 `no_run` 避免阻塞
 

@@ -5,6 +5,7 @@ edition = "2021"
 license = "MIT"
 
 [dependencies]
+clap = { version = "4", features = ["derive"] }
 compiler = { path = "../compiler" }
 
 [[bin]]
