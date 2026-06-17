@@ -48,7 +48,7 @@ impl Parser {
         let elements = crate::html::parse_html(&html_src);
         let css_rules = crate::css::parse_css(&css_src);
 
-        let all_element_vars = crate::build_all_element_vars(&elements);
+        let all_element_vars = crate::variable::build_all_element_vars(&elements);
         let (handlers, _shared_state) = crate::js::compile_js(&js_src, &all_element_vars, &css_rules);
 
         CompilationUnit {

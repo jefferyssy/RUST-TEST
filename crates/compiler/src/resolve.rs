@@ -2,11 +2,6 @@
 
 use std::path::{Path, PathBuf};
 
-/// 获取 workspace 根目录（当前工作目录）。
-pub fn workspace_root() -> PathBuf {
-    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-}
-
 /// 在项目目录中定位 HTML 入口文件。
 pub fn find_html_file(dir: &Path, entry: &str) -> Result<PathBuf, String> {
     let path = dir.join(entry);

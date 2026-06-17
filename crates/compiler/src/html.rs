@@ -470,6 +470,44 @@ pub fn parse_html(html: &str) -> Vec<HtmlElement> {
     parse_html_document(html, Path::new(".")).elements
 }
 
+/// 从 HTML 源码中提取 CSS 和 JS 文件引用。
+///
+/// 返回 `(css_refs, js_refs)`，每个元素为文件路径字符串。
+pub fn extract_references(html_src: &str) -> (Vec<String>, Vec<String>) {
+    let mut css_refs = Vec::new();
+    let mut js_refs = Vec::new();
+
+    for line in html_src.lines() {
+        // <link rel="stylesheet" href="...">
+        if line.contains("stylesheet") && line.contains("href=") {
+            if let Some(href) = extract_attr(line, "href") {
+                css_refs.push(href);
+            }
+        }
+        // <script src="...">
+        if line.contains("<script") && line.contains("src=") {
+            if let Some(src) = extract_attr(line, "src") {
+                if !src.is_empty() {
+                    js_refs.push(src);
+                }
+            }
+        }
+    }
+
+    (css_refs, js_refs)
+}
+
+/// 从 HTML 标签行中提取指定属性的值。
+fn extract_attr(line: &str, attr: &str) -> Option<String> {
+    let pattern = format!("{}=", attr);
+    let start = line.find(&pattern)?;
+    let rest = &line[start + pattern.len()..];
+    let delim = rest.chars().next()?;
+    let rest = &rest[1..];
+    let end = rest.find(delim)?;
+    Some(rest[..end].to_string())
+}
+
 #[cfg(test)]
 #[path = "../test/html_test.rs"]
 mod tests;

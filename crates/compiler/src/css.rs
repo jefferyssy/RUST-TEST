@@ -28,6 +28,22 @@ fn strip_css_comments(css: &str) -> String {
     result
 }
 
+/// 解析所有 CSS 来源（文件 + 内联）
+pub fn parse_css_sources(sources: &[crate::html::CssSource]) -> Vec<CssRule> {
+    let mut all_rules = Vec::new();
+    for src in sources {
+        let content = match src {
+            crate::html::CssSource::File(path) => {
+                std::fs::read_to_string(path).unwrap_or_default()
+            }
+            crate::html::CssSource::Inline(content) => content.clone(),
+            crate::html::CssSource::InlineAttr { content, .. } => content.clone(),
+        };
+        all_rules.extend(parse_css(&content));
+    }
+    all_rules
+}
+
 /// 解析 CSS 规则列表
 pub fn parse_css(css: &str) -> Vec<CssRule> {
     let cleaned = strip_css_comments(css);
