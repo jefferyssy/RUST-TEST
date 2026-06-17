@@ -1,0 +1,7 @@
+[package]
+name = "counter"
+
+[window]
+title = "计数器"
+width = 400
+height = 300

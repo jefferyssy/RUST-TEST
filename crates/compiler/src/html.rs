@@ -1,17 +1,14 @@
 //! # HTML 解析器 — Phase 0
 //!
-//! 简化版 HTML 标签解析器，用于将 HTML 转为元素树。
+//! 一次解析 HTML，同时收集所有 CSS/JS 资源 + 构建 DOM 树。
 //! Phase 1+ 将替换为 html5ever。
-//!
-//! 处理：
-//! - 开闭标签 `<div>...</div>`
-//! - 属性 `class="foo" id="bar"`
-//! - 自闭合标签 `<br>`, `<link>`
-//! - 文本内容提取
-//! - 过滤 <head>/<script>/<link>/<title>/<!DOCTYPE>
-//! - 只处理 <body> 内元素
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+// ═══════════════════════════════════════════════════════════════════════
+// 类型定义
+// ═══════════════════════════════════════════════════════════════════════
 
 /// HTML 元素节点
 #[derive(Debug, Clone)]
@@ -31,6 +28,39 @@ impl HtmlElement {
             children: Vec::new(),
         }
     }
+}
+
+/// CSS 来源
+#[derive(Debug, Clone)]
+pub enum CssSource {
+    /// `<link rel="stylesheet" href="...">` — 外部文件路径
+    File(PathBuf),
+    /// `<style>...</style>` — 内联内容
+    Inline(String),
+    /// `style="color: red"` — 元素属性
+    InlineAttr { var_name: String, content: String },
+}
+
+/// JS 来源
+#[derive(Debug, Clone)]
+pub enum JsSource {
+    /// `<script src="...">` — 外部文件路径
+    File(PathBuf),
+    /// `<script>...</script>` — 内联内容
+    Inline(String),
+}
+
+/// 一次解析 HTML 的完整产出
+#[derive(Debug, Clone)]
+pub struct HtmlResources {
+    /// DOM 元素树（仅 `<body>` 内可见元素）
+    pub elements: Vec<HtmlElement>,
+    /// 所有 CSS 来源（按出现顺序）
+    pub css_sources: Vec<CssSource>,
+    /// 所有 JS 来源（按出现顺序）
+    pub js_sources: Vec<JsSource>,
+    /// `import('./xxx')` 动态引用清单（Phase 1+ 用）
+    pub dynamic_imports: Vec<String>,
 }
 
 /// 提取 <body>...</body> 之间的内容，若没有则用全文
@@ -242,29 +272,91 @@ fn tokenize(body: &str) -> Vec<Token> {
     tokens
 }
 
-/// 树构建
-fn collect_elements(tokens: &[Token]) -> Vec<HtmlElement> {
+/// 一次遍历令牌流，构建 DOM 树的同时收集 CSS/JS 资源。
+fn build_document(tokens: &[Token], input_dir: &Path) -> HtmlResources {
     let mut roots: Vec<HtmlElement> = Vec::new();
     let mut stack: Vec<HtmlElement> = Vec::new();
-    let ignored_tags = ["script", "style", "link", "meta", "title", "head", "!doctype"];
+    let mut css_sources = Vec::new();
+    let mut js_sources = Vec::new();
+    let mut dynamic_imports = Vec::new();
+    let ignored_tags = ["meta", "title", "head", "!doctype"];
 
     let mut i = 0;
     while i < tokens.len() {
         match &tokens[i] {
             Token::OpenTag { name, attrs, self_closing } => {
+                // ── 处理 <style> ──
+                if name == "style" && !self_closing {
+                    i += 1;
+                    let mut content = String::new();
+                    while i < tokens.len() {
+                        if let Token::CloseTag { name: n } = &tokens[i] {
+                            if n == "style" { i += 1; break; }
+                        }
+                        if let Token::Text(t) = &tokens[i] {
+                            content.push_str(t);
+                        }
+                        i += 1;
+                    }
+                    css_sources.push(CssSource::Inline(content));
+                    continue;
+                }
+
+                // ── 处理 <link rel="stylesheet"> ──
+                if name == "link"
+                    && attrs.get("rel").map(|r| r.to_lowercase()) == Some("stylesheet".into())
+                {
+                    if let Some(href) = attrs.get("href") {
+                        css_sources.push(CssSource::File(input_dir.join(href)));
+                    }
+                    i += 1;
+                    continue;
+                }
+
+                // ── 处理 <script src="..."> ──
+                if name == "script" {
+                    if let Some(src) = attrs.get("src") {
+                        js_sources.push(JsSource::File(input_dir.join(src)));
+                        i += 1;
+                        // 跳过闭合标签
+                        while i < tokens.len() {
+                            if let Token::CloseTag { name: n } = &tokens[i] {
+                                if n == "script" { i += 1; break; }
+                            }
+                            i += 1;
+                        }
+                        continue;
+                    }
+                    // <script> 内联脚本
+                    i += 1;
+                    let mut content = String::new();
+                    while i < tokens.len() {
+                        if let Token::CloseTag { name: n } = &tokens[i] {
+                            if n == "script" { i += 1; break; }
+                        }
+                        if let Token::Text(t) = &tokens[i] {
+                            content.push_str(t);
+                            // 检测 import('...') 动态引用
+                            detect_dynamic_imports(t, &mut dynamic_imports);
+                        }
+                        i += 1;
+                    }
+                    js_sources.push(JsSource::Inline(content));
+                    continue;
+                }
+
+                // ── 跳过其他被忽略标签 ──
                 if ignored_tags.contains(&name.as_str()) {
-                    // 跳过被忽略标签的内容
                     if *self_closing {
                         i += 1;
                         continue;
                     }
-                    // 查找匹配的闭合标签
                     let mut depth = 1;
                     i += 1;
                     while i < tokens.len() && depth > 0 {
                         match &tokens[i] {
                             Token::OpenTag { name: n, self_closing: sc, .. } => {
-                                if !ignored_tags.contains(&n.as_str()) && !sc { depth += 1; }
+                                if !ignored_tags.contains(&n.as_str()) && n != "style" && n != "script" && !sc { depth += 1; }
                             }
                             Token::CloseTag { name: n } => {
                                 if n == name { depth -= 1; }
@@ -276,11 +368,23 @@ fn collect_elements(tokens: &[Token]) -> Vec<HtmlElement> {
                     continue;
                 }
 
+                // ── 正规元素：加入 DOM 树 ──
                 let mut el = HtmlElement::new(name);
                 el.attributes = attrs.clone();
 
+                // 收集 inline style
+                if let Some(style_val) = attrs.get("style") {
+                    let var_name = attrs.get("id").map(String::as_str)
+                        .or_else(|| attrs.get("class").and_then(|c| c.split_whitespace().next()))
+                        .unwrap_or(name)
+                        .replace('-', "_");
+                    css_sources.push(CssSource::InlineAttr {
+                        var_name,
+                        content: style_val.clone(),
+                    });
+                }
+
                 if *self_closing {
-                    // 自闭合 → 直接加入父元素或根
                     if let Some(parent) = stack.last_mut() {
                         parent.children.push(el);
                     }
@@ -290,19 +394,14 @@ fn collect_elements(tokens: &[Token]) -> Vec<HtmlElement> {
                 i += 1;
             }
             Token::CloseTag { name } => {
-                // 从栈中弹出匹配的元素
                 if let Some(pos) = stack.iter().rposition(|e| e.tag == *name) {
                     let mut completed = stack.split_off(pos);
                     let el = completed.remove(0);
-                    // 更新栈顶元素的 children（如果有）
                     if let Some(parent) = stack.last_mut() {
                         parent.children.push(el);
                     } else {
                         roots.push(el);
                     }
-                    // 将剩下的元素拉回栈
-                    // 实际上 split_off 后 completed 是后半段 [el, ...]
-                    // el 已被移出，剩下的应该是同级的后续元素
                     for remaining in completed {
                         if let Some(parent) = stack.last_mut() {
                             parent.children.push(remaining);
@@ -325,55 +424,50 @@ fn collect_elements(tokens: &[Token]) -> Vec<HtmlElement> {
         }
     }
 
-    // 栈中剩余的元素作为根
-    roots
+    let elements = roots
+        .into_iter()
+        .filter(|e| e.tag != "html" && e.tag != "body" && e.tag != "head")
+        .collect();
+
+    HtmlResources {
+        elements,
+        css_sources,
+        js_sources,
+        dynamic_imports,
+    }
 }
 
-/// 从 HTML 源码中提取外部资源引用（CSS 和 JS 文件路径）。
-///
-/// 扫描 `<link rel="stylesheet" href="...">` 和 `<script src="...">` 标签，
-/// 返回 `(css_files, js_files)` 两个列表。
-///
-/// 用于 CLI 工具链在调用编译器之前确定需要加载哪些 CSS/JS 文件。
-pub fn extract_references(html: &str) -> (Vec<String>, Vec<String>) {
-    let cleaned = strip_comments(html);
-    let tokens = tokenize(&cleaned);
-    let mut css_files = Vec::new();
-    let mut js_files = Vec::new();
-
-    for token in &tokens {
-        match token {
-            Token::OpenTag { name, attrs, .. } if name == "link" => {
-                if attrs.get("rel").map(|r| r.to_lowercase()) == Some("stylesheet".into()) {
-                    if let Some(href) = attrs.get("href") {
-                        css_files.push(href.clone());
+/// 在 JS 源码中检测 `import('...')` 动态引用。
+fn detect_dynamic_imports(js: &str, out: &mut Vec<String>) {
+    let mut pos = 0;
+    while let Some(idx) = js[pos..].find("import(") {
+        let start = pos + idx + 7; // after "import("
+        let rest = &js[start..];
+        if let Some(quote) = rest.chars().next() {
+            if quote == '\'' || quote == '"' {
+                if let Some(end) = rest[1..].find(quote) {
+                    let path = &rest[1..=end];
+                    if !path.is_empty() {
+                        out.push(path.to_string());
                     }
                 }
             }
-            Token::OpenTag { name, attrs, .. } if name == "script" => {
-                if let Some(src) = attrs.get("src") {
-                    js_files.push(src.clone());
-                }
-            }
-            _ => {}
         }
+        pos = start;
     }
-
-    (css_files, js_files)
 }
 
-/// 主入口：解析 HTML 字符串，返回 body 内的元素树
-pub fn parse_html(html: &str) -> Vec<HtmlElement> {
-    let cleaned = strip_comments(html);
+/// 主入口：一次解析 HTML，同时收集所有资源 + 构建元素树。
+pub fn parse_html_document(html_src: &str, input_dir: &Path) -> HtmlResources {
+    let cleaned = strip_comments(html_src);
     let body = extract_body(&cleaned);
     let tokens = tokenize(body);
-    let elements = collect_elements(&tokens);
+    build_document(&tokens, input_dir)
+}
 
-    // 过滤掉特殊的或空的顶层元素
-    elements
-        .into_iter()
-        .filter(|e| e.tag != "html" && e.tag != "body" && e.tag != "head")
-        .collect()
+/// 解析 HTML 字符串，返回 body 内的元素树（`parse_html_document` 的简化包装）。
+pub fn parse_html(html: &str) -> Vec<HtmlElement> {
+    parse_html_document(html, Path::new(".")).elements
 }
 
 #[cfg(test)]

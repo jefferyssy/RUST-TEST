@@ -1,0 +1,5 @@
+[package]
+name = "flex-nav"
+
+[window]
+title = "Flex 导航栏"

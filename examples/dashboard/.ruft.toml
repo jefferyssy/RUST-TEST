@@ -1,0 +1,5 @@
+[package]
+name = "dashboard"
+
+[window]
+title = "仪表盘"

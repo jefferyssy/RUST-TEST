@@ -1,0 +1,5 @@
+[package]
+name = "todo-app"
+
+[window]
+title = "Todo 应用"

@@ -1,69 +1,7 @@
-//! CLI 参数解析和默认值测试。
+//! CLI 参数解析测试。
 
 use super::*;
 use clap::Parser;
-
-// ── Args::from_build ──
-
-#[test]
-fn args_default_name_from_input_dir() {
-    let a = BuildArgs {
-        input_dir: PathBuf::from("examples/counter"),
-        output_dir: None,
-        name: None,
-        title: "Demo".into(),
-        width: 800,
-        height: 600,
-    };
-    let args = Args::from_build(a);
-    assert_eq!(args.name, "counter");
-    assert_eq!(args.output_dir, PathBuf::from("target/generated/counter"));
-}
-
-#[test]
-fn args_explicit_name_overrides_input_dir() {
-    let a = BuildArgs {
-        input_dir: PathBuf::from("examples/counter"),
-        output_dir: None,
-        name: Some("my-app".into()),
-        title: "Demo".into(),
-        width: 800,
-        height: 600,
-    };
-    let args = Args::from_build(a);
-    assert_eq!(args.name, "my-app");
-    assert_eq!(args.output_dir, PathBuf::from("target/generated/my-app"));
-}
-
-#[test]
-fn args_explicit_output_dir() {
-    let a = BuildArgs {
-        input_dir: PathBuf::from("examples/counter"),
-        output_dir: Some(PathBuf::from("/tmp/out")),
-        name: None,
-        title: "Demo".into(),
-        width: 800,
-        height: 600,
-    };
-    let args = Args::from_build(a);
-    assert_eq!(args.output_dir, PathBuf::from("/tmp/out"));
-}
-
-#[test]
-fn args_preserves_title_width_height() {
-    let a = BuildArgs {
-        input_dir: PathBuf::from("examples/foo"),
-        output_dir: None,
-        name: None,
-        title: "My App".into(),
-        width: 1024,
-        height: 768,
-    };
-    let args = Args::from_build(a);
-    assert_eq!(args.title, "My App");
-    assert_eq!(args.width, 1024);
-    assert_eq!(args.height, 768);
-}
 
 // ── clap 参数解析 ──
 
@@ -73,9 +11,10 @@ fn parse_compile_minimal() {
     match cli.command {
         Command::Compile(a) => {
             assert_eq!(a.input_dir, PathBuf::from("examples/counter"));
-            assert_eq!(a.title, "Demo");
-            assert_eq!(a.width, 800);
-            assert_eq!(a.height, 600);
+            // 未传参数时为 None，由 compiler 兜底
+            assert_eq!(a.title, None);
+            assert_eq!(a.width, None);
+            assert_eq!(a.height, None);
         }
         _ => panic!("expected Compile"),
     }
@@ -97,9 +36,9 @@ fn parse_compile_all_flags() {
             assert_eq!(a.input_dir, PathBuf::from("my-app"));
             assert_eq!(a.output_dir, Some(PathBuf::from("build/out")));
             assert_eq!(a.name, Some("app".into()));
-            assert_eq!(a.title, "Hello");
-            assert_eq!(a.width, 640);
-            assert_eq!(a.height, 480);
+            assert_eq!(a.title, Some("Hello".into()));
+            assert_eq!(a.width, Some(640));
+            assert_eq!(a.height, Some(480));
         }
         _ => panic!("expected Compile"),
     }
@@ -111,7 +50,7 @@ fn parse_run_minimal() {
     match cli.command {
         Command::Run(a) => {
             assert_eq!(a.input_dir, PathBuf::from("examples/todo_app"));
-            assert_eq!(a.title, "Demo");
+            assert_eq!(a.title, None);
         }
         _ => panic!("expected Run"),
     }
@@ -131,8 +70,8 @@ fn parse_run_with_flags() {
     match cli.command {
         Command::Run(a) => {
             assert_eq!(a.name, Some("flex".into()));
-            assert_eq!(a.width, 1280);
-            assert_eq!(a.height, 720);
+            assert_eq!(a.width, Some(1280));
+            assert_eq!(a.height, Some(720));
         }
         _ => panic!("expected Run"),
     }

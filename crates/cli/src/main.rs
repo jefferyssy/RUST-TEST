@@ -19,15 +19,14 @@
 //!
 //! ## 数据流
 //! ```text
-//! 命令行参数 → clap 解析 → BuildArgs → Args（默认值解析）→ compiler::compile_project_to_dir
-//!                                                                     ↓
-//!                                                         Cargo.toml + src/main.rs
-//!                                                                     ↓
-//!                                                               cargo run
+//! 命令行参数 → clap 解析 → Args → compiler::compile_project_to_dir
+//!                                         ↓
+//!                             Cargo.toml + src/main.rs
+//!                                         ↓
+//!                                   cargo run
 //! ```
 
 use clap::{Parser, Subcommand};
-use std::env;
 use std::path::PathBuf;
 use std::process::{self, Command as StdCommand};
 
@@ -47,140 +46,91 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Command {
     /// 仅生成 Rust 项目代码，不运行。
-    ///
-    /// 读取 `<input-dir>` 中的 HTML/CSS/JS 源文件，生成完整的 Cargo 项目
-    /// （`main.rs` + `Cargo.toml`）到 `--output-dir`（默认 `target/generated/<name>`）。
-    Compile(BuildArgs),
+    Compile(Args),
     /// 生成代码后自动调用 `cargo run` 编译并运行。
-    Run(BuildArgs),
+    Run(Args),
 }
 
 /// `compile` 和 `run` 共用的构建参数。
 ///
-/// 静态默认值（`title`、`width`、`height`）由 clap 处理；
-/// 动态默认值（`name` 取自 `input_dir` 文件夹名、`output_dir` 基于 `name`）
-/// 在 [`Args::from_build`] 中解析。
-#[derive(clap::Args, Debug)]
-struct BuildArgs {
+/// 所有 `Option` 字段直接透传给 compiler，由 compiler 按 `CLI > .ruft.* > 硬编码` 优先级解析。
+/// CLI 层不做任何默认值处理。
+#[derive(clap::Args, Debug, Clone)]
+struct Args {
     /// 输入目录路径，应包含 `index.html`、`style.css`、`app.js` 三个源文件。
     input_dir: PathBuf,
 
-    /// 输出目录路径。默认 `target/generated/<项目名>`。
+    /// 输出目录路径。不指定时由 compiler 根据 name 推导。
     #[arg(short = 'o', long)]
     output_dir: Option<PathBuf>,
 
-    /// 项目名称，用作 Cargo package name 和输出目录名。默认取输入目录文件夹名。
+    /// 项目名称，用作 Cargo package name。不指定时由配置文件或目录名兜底。
     #[arg(long)]
     name: Option<String>,
 
-    /// 窗口标题，显示在窗口标题栏。
-    #[arg(long, default_value = "Demo")]
-    title: String,
+    /// 窗口标题，显示在窗口标题栏。不指定时由配置文件或默认值兜底。
+    #[arg(long)]
+    title: Option<String>,
 
-    /// 窗口宽度（像素）。
-    #[arg(long, default_value_t = 800)]
-    width: u32,
+    /// 窗口宽度（像素）。不指定时由配置文件或默认值兜底。
+    #[arg(long)]
+    width: Option<u32>,
 
-    /// 窗口高度（像素）。
-    #[arg(long, default_value_t = 600)]
-    height: u32,
+    /// 窗口高度（像素）。不指定时由配置文件或默认值兜底。
+    #[arg(long)]
+    height: Option<u32>,
 }
 
-// ── 内部参数（默认值已解析） ──
+// ── Args → CompileInput ──
 
-/// 解析后的命令行参数，所有动态默认值已计算完毕。
-///
-/// 与 [`BuildArgs`] 的区别：`name` 和 `output_dir` 在这里已经是确定的非 `Option` 值，
-/// 下游代码无需再处理 `None` 情况。
-struct Args {
-    /// 输入目录路径。
-    input_dir: PathBuf,
-    /// 输出目录路径（已解析默认值）。
-    output_dir: PathBuf,
-    /// 项目名称（已解析默认值）。
-    name: String,
-    /// 窗口标题。
-    title: String,
-    /// 窗口宽度（像素）。
-    width: u32,
-    /// 窗口高度（像素）。
-    height: u32,
-}
-
-impl Args {
-    /// 从 clap 解析结果构造，处理动态默认值：
-    /// - `name`: `None` → 取 `input_dir` 的文件夹名，兜底 `"app"`
-    /// - `output_dir`: `None` → `target/generated/<name>`
-    fn from_build(a: BuildArgs) -> Self {
-        let name = a.name.unwrap_or_else(|| {
-            a.input_dir
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "app".into())
-        });
-        let output_dir = a
-            .output_dir
-            .unwrap_or_else(|| PathBuf::from("target/generated").join(&name));
+impl From<&Args> for compiler::CompileInput {
+    fn from(a: &Args) -> Self {
         Self {
-            input_dir: a.input_dir,
-            output_dir,
-            name,
-            title: a.title,
+            input_dir: a.input_dir.clone(),
+            output_dir: a.output_dir.clone(),
+            name: a.name.clone(),
+            title: a.title.clone(),
             width: a.width,
             height: a.height,
         }
     }
 }
 
+
 // ── 入口 ──
 
-/// CLI 主入口。
-///
-/// 1. 通过 clap 解析命令行参数
-/// 2. `BuildArgs` → [`Args::from_build`] 解析动态默认值
-/// 3. 根据子命令分发到 [`cmd_compile`] 或 [`cmd_run`]
 fn main() {
     let cli = Cli::parse();
     match cli.command {
-        Command::Compile(a) => cmd_compile(&Args::from_build(a)),
-        Command::Run(a) => cmd_run(&Args::from_build(a)),
+        Command::Compile(a) => {
+            cmd_compile(&a);
+        }
+        Command::Run(a) => cmd_run(&a),
     }
 }
+
+
 
 // ── 子命令 ──
 
 /// `cli compile` — 委托给 [`compiler::compile_project_to_dir`]。
 ///
-/// 构造 [`compiler::CompileOptions`]，以当前工作目录为 workspace 根，
-/// 将编译和文件输出全部交给 compiler crate 完成。
-fn cmd_compile(args: &Args) {
-    let workspace_root = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let opts = compiler::CompileOptions {
-        title: args.title.clone(),
-        width: args.width,
-        height: args.height,
-    };
-
-    eprintln!(
-        "Compiling {} from {:?} -> {:?}",
-        args.name, args.input_dir, args.output_dir
-    );
-
-    if let Err(e) = compiler::compile_project_to_dir(
-        &args.input_dir,
-        &args.output_dir,
-        &args.name,
-        &workspace_root,
-        &opts,
-    ) {
-        eprintln!("error: {e}");
-        process::exit(1);
+/// 所有默认值由 compiler 按优先级解析。返回整合后的配置集合。
+fn cmd_compile(args: &Args) -> compiler::ResolvedConfig {
+    match compiler::compile_project_to_dir(args.into()) {
+        Ok(out) => {
+            eprintln!(
+                "Done. Run with: cargo run --manifest-path {}/Cargo.toml",
+                out.output_dir.display()
+            );
+            dbg!(&out);
+            out
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            process::exit(1);
+        }
     }
-
-    eprintln!(
-        "Done. Run with: cargo run --manifest-path {}/Cargo.toml",
-        args.output_dir.display()
-    );
 }
 
 /// `cli run` — 先 compile 再 `cargo run`。
@@ -189,13 +139,13 @@ fn cmd_compile(args: &Args) {
 /// `cargo run --manifest-path <output_dir>/Cargo.toml`。
 /// cargo 返回非零退出码时，原样向上传递。
 fn cmd_run(args: &Args) {
-    cmd_compile(args);
+    let out = cmd_compile(args);
 
     eprintln!("Running...");
 
     let status = StdCommand::new("cargo")
         .args(["run", "--manifest-path"])
-        .arg(args.output_dir.join("Cargo.toml"))
+        .arg(out.output_dir.join("Cargo.toml"))
         .status()
         .unwrap_or_else(|e| {
             eprintln!("error: cargo run failed: {e}");
