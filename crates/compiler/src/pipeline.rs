@@ -23,6 +23,7 @@
 //! Phase 5: codegen::generate_*()     → Rust 代码输出
 //! ```
 
+use crate::js::{EventHandler, SharedStateVar};
 use crate::variable;
 use crate::{css, html, js};
 use std::fs;
@@ -64,7 +65,7 @@ pub fn compile_body_with_options(
     compile_resources(&resources, title, width, height)
 }
 
-/// 核心管线：从已解析的 [`HtmlResources`] 生成 Rust 代码。
+/// 核心管线：从已解析的 [`HtmlResources`] 生成 Rust 代码（单文件模式）。
 pub(crate) fn compile_resources(
     resources: &html::HtmlResources,
     title: &str,
@@ -96,6 +97,83 @@ pub(crate) fn compile_resources(
         &root_assignments,
         &matched_styles,
         &handlers,
+    )
+}
+
+/// 核心管线（拆分模式）：返回结构化数据用于多文件输出。
+///
+/// 每个 CSS/JS 源文件独立编译，一一对应输出 .rs 文件。
+pub(crate) fn compile_resources_split(
+    resources: &html::HtmlResources,
+    title: &str,
+    width: u32,
+    height: u32,
+) -> crate::codegen::MultiFileOutput {
+    let elements = &resources.elements;
+    let root_assignments = variable::assign_root_variable_names(elements);
+    let all_element_vars = variable::build_all_element_vars(elements);
+
+    // 逐 CSS 文件解析样式并匹配
+    let mut css_files: Vec<(String, Vec<(String, String)>)> = Vec::new();
+    for src in &resources.css_sources {
+        let (name, content) = match src {
+            html::CssSource::File(path) => (
+                path.file_stem().unwrap_or_default().to_string_lossy().to_string(),
+                fs::read_to_string(path).unwrap_or_default(),
+            ),
+            html::CssSource::Inline(content) => ("inline".into(), content.clone()),
+            html::CssSource::InlineAttr { var_name: _, content } => ("inline_attr".into(), content.clone()),
+        };
+        let rules = css::parse_css(&content);
+        let matched = css::match_css_to_elements(&rules, elements, &all_element_vars);
+        css_files.push((name, matched));
+    }
+
+    // 逐 JS 文件编译
+    let mut js_files: Vec<(String, Vec<EventHandler>, Vec<SharedStateVar>)> = Vec::new();
+    for src in &resources.js_sources {
+        let (name, js_content) = match src {
+            html::JsSource::File(path) => (
+                path.file_stem().unwrap_or_default().to_string_lossy().to_string(),
+                fs::read_to_string(path).unwrap_or_else(|e| panic!("Cannot read JS '{}': {e}", path.display())),
+            ),
+            html::JsSource::Inline(content) => ("inline".into(), content.clone()),
+        };
+        let (h, s) = js::compile_js(&js_content, &all_element_vars, &css::parse_css_sources(&resources.css_sources));
+        js_files.push((name, h, s));
+    }
+
+    // 从原始 CSS 规则中提取 body 样式（body 不在元素树中，需单独处理）
+    let mut body_styles = String::new();
+    for src in &resources.css_sources {
+        let content = match src {
+            html::CssSource::File(path) => fs::read_to_string(path).unwrap_or_default(),
+            html::CssSource::Inline(c) => c.clone(),
+            html::CssSource::InlineAttr { content, .. } => content.clone(),
+        };
+        for rule in css::parse_css(&content) {
+            if rule.selector.trim() == "body" {
+                let style_str = rule.declarations.iter()
+                    .map(|(k, v)| format!("{}: {}", k, v))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                if !style_str.is_empty() {
+                    if !body_styles.is_empty() { body_styles.push_str("; "); }
+                    body_styles.push_str(&style_str);
+                }
+            }
+        }
+    }
+
+    crate::codegen::generate_multi_file(
+        &root_assignments,
+        &all_element_vars,
+        &css_files,
+        &js_files,
+        &body_styles,
+        title,
+        width,
+        height,
     )
 }
 

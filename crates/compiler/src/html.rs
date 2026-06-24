@@ -345,25 +345,30 @@ fn build_document(tokens: &[Token], input_dir: &Path) -> HtmlResources {
                     continue;
                 }
 
-                // ── 跳过其他被忽略标签 ──
+                // ── 处理被忽略标签中的资源引用 ──
                 if ignored_tags.contains(&name.as_str()) {
                     if *self_closing {
                         i += 1;
                         continue;
                     }
-                    let mut depth = 1;
-                    i += 1;
-                    while i < tokens.len() && depth > 0 {
-                        match &tokens[i] {
-                            Token::OpenTag { name: n, self_closing: sc, .. } => {
-                                if !ignored_tags.contains(&n.as_str()) && n != "style" && n != "script" && !sc { depth += 1; }
-                            }
-                            Token::CloseTag { name: n } => {
-                                if n == name { depth -= 1; }
-                            }
-                            _ => {}
-                        }
+                    // 在跳过之前，扫描 head 内部提取 CSS/JS 引用
+                    if name == "head" {
+                        scan_head_for_resources(tokens, &mut i, input_dir, &mut css_sources, &mut js_sources);
+                    } else {
+                        let mut depth = 1;
                         i += 1;
+                        while i < tokens.len() && depth > 0 {
+                            match &tokens[i] {
+                                Token::OpenTag { name: n, self_closing: sc, .. } => {
+                                    if !ignored_tags.contains(&n.as_str()) && n != "style" && n != "script" && !sc { depth += 1; }
+                                }
+                                Token::CloseTag { name: n } => {
+                                    if n == name { depth -= 1; }
+                                }
+                                _ => {}
+                            }
+                            i += 1;
+                        }
                     }
                     continue;
                 }
@@ -437,6 +442,60 @@ fn build_document(tokens: &[Token], input_dir: &Path) -> HtmlResources {
     }
 }
 
+/// 扫描 <head> 内部，提取 <link rel="stylesheet"> 和 <style> / <script> 引用
+fn scan_head_for_resources(
+    tokens: &[Token],
+    i: &mut usize,
+    input_dir: &Path,
+    css_sources: &mut Vec<CssSource>,
+    js_sources: &mut Vec<JsSource>,
+) {
+    let mut depth: i32 = 1;
+    *i += 1;
+    while *i < tokens.len() && depth > 0 {
+        match &tokens[*i] {
+            Token::OpenTag { name, attrs, self_closing } => {
+                if name == "link"
+                    && attrs.get("rel").map(|r| r.to_lowercase()) == Some("stylesheet".into())
+                {
+                    if let Some(href) = attrs.get("href") {
+                        css_sources.push(CssSource::File(input_dir.join(href)));
+                    }
+                } else if name == "style" && !self_closing {
+                    // 提取内联 <style> 内容
+                    *i += 1;
+                    let mut content = String::new();
+                    while *i < tokens.len() {
+                        if let Token::CloseTag { name: n } = &tokens[*i] {
+                            if n == "style" { break; }
+                        }
+                        if let Token::Text(t) = &tokens[*i] {
+                            content.push_str(t);
+                        }
+                        *i += 1;
+                    }
+                    if !content.trim().is_empty() {
+                        css_sources.push(CssSource::Inline(content));
+                    }
+                } else if name == "script" && attrs.contains_key("src") {
+                    if let Some(src) = attrs.get("src") {
+                        js_sources.push(JsSource::File(input_dir.join(src)));
+                    }
+                }
+                if !self_closing && name != "link" {
+                    depth += 1;
+                }
+            }
+            Token::CloseTag { name } => {
+                if name == "head" { depth -= 1; }
+                else if name != "link" { depth -= 1; }
+            }
+            _ => {}
+        }
+        *i += 1;
+    }
+}
+
 /// 在 JS 源码中检测 `import('...')` 动态引用。
 fn detect_dynamic_imports(js: &str, out: &mut Vec<String>) {
     let mut pos = 0;
@@ -460,9 +519,34 @@ fn detect_dynamic_imports(js: &str, out: &mut Vec<String>) {
 /// 主入口：一次解析 HTML，同时收集所有资源 + 构建元素树。
 pub fn parse_html_document(html_src: &str, input_dir: &Path) -> HtmlResources {
     let cleaned = strip_comments(html_src);
+
+    // 1. 从完整 HTML 中扫描资源引用（head 中的 <link>/<style>/<script> 等）
+    let (css_refs, js_refs) = extract_references(&cleaned);
+
+    // 2. 解析 body 元素树
     let body = extract_body(&cleaned);
     let tokens = tokenize(body);
-    build_document(&tokens, input_dir)
+    let mut resources = build_document(&tokens, input_dir);
+
+    // 3. 合并 head 中发现的资源
+    for href in &css_refs {
+        if !resources.css_sources.iter().any(|s| match s {
+            CssSource::File(p) => p.to_string_lossy().contains(href),
+            _ => false,
+        }) {
+            resources.css_sources.push(CssSource::File(input_dir.join(href)));
+        }
+    }
+    for src in &js_refs {
+        if !resources.js_sources.iter().any(|s| match s {
+            JsSource::File(p) => p.to_string_lossy().contains(src),
+            _ => false,
+        }) {
+            resources.js_sources.push(JsSource::File(input_dir.join(src)));
+        }
+    }
+
+    resources
 }
 
 /// 解析 HTML 字符串，返回 body 内的元素树（`parse_html_document` 的简化包装）。
