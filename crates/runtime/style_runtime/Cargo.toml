@@ -1,0 +1,8 @@
+[package]
+name = "style_runtime"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+dom_flat = { path = "../dom_flat" }

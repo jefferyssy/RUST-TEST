@@ -550,6 +550,10 @@ name = "dom"
 version = "0.1.0"
 
 [[package]]
+name = "dom_flat"
+version = "0.1.0"
+
+[[package]]
 name = "downcast-rs"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2100,6 +2104,13 @@ dependencies = [
  "cssparser",
  "dom",
  "selectors",
+]
+
+[[package]]
+name = "style_runtime"
+version = "0.1.0"
+dependencies = [
+ "dom_flat",
 ]
 
 [[package]]

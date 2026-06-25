@@ -522,13 +522,22 @@ pub fn parse_html_document(html_src: &str, input_dir: &Path) -> HtmlResources {
 
     // 1. 从完整 HTML 中扫描资源引用（head 中的 <link>/<style>/<script> 等）
     let (css_refs, js_refs) = extract_references(&cleaned);
+    let inline_styles = extract_style_blocks(&cleaned);
 
     // 2. 解析 body 元素树
     let body = extract_body(&cleaned);
     let tokens = tokenize(body);
     let mut resources = build_document(&tokens, input_dir);
 
-    // 3. 合并 head 中发现的资源
+    // 3. 合并 head 中发现的资源：内联 <style> 优先（保持 CSS 层叠顺序）
+    for content in &inline_styles {
+        if !resources.css_sources.iter().any(|s| match s {
+            CssSource::Inline(c) => c == content,
+            _ => false,
+        }) {
+            resources.css_sources.push(CssSource::Inline(content.clone()));
+        }
+    }
     for href in &css_refs {
         if !resources.css_sources.iter().any(|s| match s {
             CssSource::File(p) => p.to_string_lossy().contains(href),
@@ -579,6 +588,35 @@ pub fn extract_references(html_src: &str) -> (Vec<String>, Vec<String>) {
     }
 
     (css_refs, js_refs)
+}
+
+/// 从 HTML 源码中提取所有 `<style>...</style>` 内联 CSS 内容。
+fn extract_style_blocks(html_src: &str) -> Vec<String> {
+    let mut blocks = Vec::new();
+    let lower = html_src.to_lowercase();
+    let mut pos = 0;
+
+    while let Some(start) = lower[pos..].find("<style") {
+        let abs_start = pos + start;
+        // 找到 <style 的结束 >
+        let after_tag = match html_src[abs_start..].find('>') {
+            Some(i) => abs_start + i + 1,
+            None => break,
+        };
+        // 找到 </style>
+        let rest_lower = &lower[after_tag..];
+        let Some(end) = rest_lower.find("</style>") else { break };
+        let abs_end = after_tag + end;
+
+        let content = html_src[after_tag..abs_end].trim().to_string();
+        if !content.is_empty() {
+            blocks.push(content);
+        }
+
+        pos = abs_end + 8; // 跳过 </style>
+    }
+
+    blocks
 }
 
 /// 从 HTML 标签行中提取指定属性的值。
