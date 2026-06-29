@@ -26,10 +26,10 @@ pub fn parse_css_sources(sources: &[crate::html::CssSource]) -> Vec<CssRule> {
     let mut all_rules = Vec::new();
     for src in sources {
         let content = match src {
-            crate::html::CssSource::File(path) => {
+            crate::html::CssSource::File { path, .. } => {
                 std::fs::read_to_string(path).unwrap_or_default()
             }
-            crate::html::CssSource::Inline(content) => content.clone(),
+            crate::html::CssSource::Inline { content, .. } => content.clone(),
             crate::html::CssSource::InlineAttr { content, .. } => content.clone(),
         };
         all_rules.extend(parse_css(&content));

@@ -45,9 +45,17 @@ fn test_parse_with_body_and_html() {
 </html>"#;
     let elements = parse_html(html);
     assert_eq!(elements.len(), 1);
-    assert_eq!(elements[0].tag, "div");
-    assert_eq!(elements[0].attributes.get("id").unwrap(), "main");
-    assert_eq!(elements[0].text_content, "content");
+    // 顶层是 <html>，含 <head> + <body>
+    assert_eq!(elements[0].tag, "html");
+    assert_eq!(elements[0].children.len(), 2);
+    assert_eq!(elements[0].children[0].tag, "head");
+    assert_eq!(elements[0].children[1].tag, "body");
+    // <body> 含 <div>
+    let body = &elements[0].children[1];
+    assert_eq!(body.children.len(), 1);
+    assert_eq!(body.children[0].tag, "div");
+    assert_eq!(body.children[0].attributes.get("id").unwrap(), "main");
+    assert_eq!(body.children[0].text_content, "content");
 }
 
 #[test]

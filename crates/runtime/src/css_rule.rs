@@ -17,7 +17,7 @@ pub struct CssRule {
 
 impl CssRule {
     /// 从 Select builder 创建规则。
-    pub fn on(select: Select) -> Self {
+    pub fn new(select: Select) -> Self {
         Self {
             selectorText: String::new(),
             selector: select.done(),

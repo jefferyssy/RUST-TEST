@@ -61,6 +61,10 @@ struct Args {
     /// 窗口高度（像素）
     #[arg(long)]
     height: Option<u32>,
+
+    /// 启用运行时可视化仪表盘（DevTools）
+    #[arg(long)]
+    view: bool,
 }
 
 // ── Args → CompileInput ──
@@ -74,6 +78,7 @@ impl From<&Args> for compiler::CompileInput {
             title: a.title.clone(),
             width: a.width,
             height: a.height,
+            dev_view: a.view,
         }
     }
 }

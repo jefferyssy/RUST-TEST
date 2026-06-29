@@ -1,10 +1,9 @@
 //! style_manager — CSS 样式引擎（对标 Chrome Blink StyleEngine）。
 
-use dom_flat::{ComputedStyle, CssRule, DomRegistry, NodeId, StyleSheetList};
-
-use super::cascade::cascade;
-use super::index::RuleIndex;
-use super::selector_match::SelectorMatchExt;
+use crate::{ComputedStyle, CssRule, DomRegistry, NodeId, StyleSheetList};
+use crate::cascade::cascade;
+use crate::index::RuleIndex;
+use crate::selector_match::SelectorMatchExt;
 
 /// 样式表索引缓存。
 #[derive(Debug, Clone)]
@@ -162,7 +161,6 @@ impl StyleEngine {
             document.markAllDirty(body_id);
         }
         self.flushStyleDirty(document);
-        println!("{}", dom_flat::print_dom_tree(document, document.bodyId.expect("bodyId not set")));
         on_ready(document);
     }
 }
@@ -199,7 +197,7 @@ pub fn parse_css(css: &str) -> Vec<CssRule> {
                     if sel.is_empty() {
                         continue;
                     }
-                    if let Some(selector) = dom_flat::ComplexSelector::parse(sel) {
+                    if let Some(selector) = crate::ComplexSelector::parse(sel) {
                         let declarations = parse_declarations(decl_block);
                         if !declarations.is_empty() {
                             rules.push(CssRule {

@@ -2,17 +2,17 @@
 
 use std::collections::HashMap;
 
-use dom_flat::{ComputedStyle, CssRule};
+use crate::{ComputedStyle, CssRule};
 
 /// 层叠合并：从匹配的 CSS 规则列表计算最终 ComputedStyle。
 ///
 /// 优先级：内联 style > 高特异性选择器 > 低特异性选择器 > 默认值。
 /// 同等特异性：后声明的规则覆盖先声明的规则。
 ///
-/// `inlineStyle` 是节点的内联 style 属性（`element.style`），优先级最高。
+/// `inlineStyle` 是节点已解析的内联样式声明（`element.style`），优先级最高。
 /// `matchedRules` 已按规则表顺序排列（先声明的在前，后声明的在后）。
 pub fn cascade(
-    inlineStyle: &str,
+    inlineStyle: &[(String, String)],
     matchedRules: &[CssRule],
 ) -> ComputedStyle {
     let mut style = ComputedStyle::default();
@@ -32,22 +32,14 @@ pub fn cascade(
         }
     }
 
-    // 2. 内联样式的声明（最高优先级标记）
-    if !inlineStyle.is_empty() {
-        for decl in inlineStyle.split(';') {
-            let decl = decl.trim();
-            if decl.is_empty() {
-                continue;
-            }
-            if let Some((prop, val)) = decl.split_once(':') {
-                declarations.push((
-                    prop.trim().to_string(),
-                    val.trim().to_string(),
-                    u32::MAX, // 内联样式最高特异性
-                    true,
-                ));
-            }
-        }
+    // 2. 内联样式的声明（最高优先级，已结构化解析）
+    for (prop, val) in inlineStyle {
+        declarations.push((
+            prop.clone(),
+            val.clone(),
+            u32::MAX, // 内联样式最高特异性
+            true,
+        ));
     }
 
     // 3. 按 property 分组，每组取最高特异性 + 最后声明的值

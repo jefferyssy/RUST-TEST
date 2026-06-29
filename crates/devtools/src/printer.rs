@@ -2,7 +2,7 @@
 //!
 //! 用于一期验证：将 DomRegistry 中的 DOM 结构和计算样式以可读文本输出。
 
-use crate::{ComputedStyle, DomRegistry, NodeId};
+use runtime::{ComputedStyle, DomRegistry, NodeId};
 
 /// 打印整棵 DOM 树及每个节点的计算样式。
 ///

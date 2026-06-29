@@ -15,9 +15,11 @@ use crate::pipeline::CssModuleSpec;
 pub struct MultiFileOutput {
     /// main.rs 内容
     pub main_rs: String,
-    /// html.rs 内容（VNode 构造）
+    /// html.rs 内容（VNode 构造 + 内联 <style>）
     pub html_rs: String,
-    /// 样式文件：(stem, content) → stem.rs
+    /// html 模块名（如 index_html）
+    pub html_module_name: String,
+    /// 样式文件（仅外部 CSS）：(stem, content) → stem.rs
     pub style_files: Vec<(String, String)>,
     /// 处理器文件：(stem, content) → stem.rs
     pub handler_files: Vec<(String, String)>,
@@ -29,18 +31,31 @@ pub struct MultiFileOutput {
 
 /// 生成拆分后的多文件输出。
 pub fn generate_multi_file(
+    html_module_name: &str,
     elements: &[HtmlElement],
     css_specs: &[CssModuleSpec],
     js_handlers: &[(String, Vec<EventHandler>, Vec<SharedStateVar>)],
     title: &str,
     width: u32,
     height: u32,
+    dev_view: bool,
 ) -> MultiFileOutput {
-    // html.rs — VNode 树构造
-    let html_rs = generate_html_module(elements);
+    // 分离内联样式（<style> 标签）与外部样式（<link>）
+    // 排除 style="..." 行内属性（is_inline_attr），它们仅生成 VNode .with_style()
+    let inline_specs: Vec<&CssModuleSpec> = css_specs
+        .iter()
+        .filter(|s| s.href.is_none() && !s.is_inline_attr)
+        .collect();
+    let external_specs: Vec<&CssModuleSpec> = css_specs
+        .iter()
+        .filter(|s| s.href.is_some())
+        .collect();
 
-    // style_N.rs — 每个 CSS 源生成 create_style_sheet()
-    let style_files: Vec<(String, String)> = css_specs
+    // html.rs — VNode 树构造 + 内联 <style>
+    let html_rs = generate_html_module(elements, &inline_specs);
+
+    // style_N.rs — 仅外部 CSS 文件
+    let style_files: Vec<(String, String)> = external_specs
         .iter()
         .map(|spec| {
             let content = generate_style_module(spec);
@@ -57,46 +72,92 @@ pub fn generate_multi_file(
         })
         .collect();
 
+    let has_inline_styles = !inline_specs.is_empty();
+
     // main.rs — 入口调度
     let main_rs = generate_main_module(
+        html_module_name,
         title, width, height,
-        &style_files, &handler_files,
+        &style_files, &handler_files, has_inline_styles, dev_view,
     );
 
     MultiFileOutput {
         main_rs,
         html_rs,
+        html_module_name: html_module_name.to_string(),
         style_files,
         handler_files,
     }
 }
 
-/// 生成 html.rs：VNode 树构造。
-fn generate_html_module(elements: &[HtmlElement]) -> String {
+/// 生成 html.rs：VNode 树构造 + 内联 <style> 样式表
+fn generate_html_module(
+    elements: &[HtmlElement],
+    inline_styles: &[&CssModuleSpec],
+) -> String {
     let mut code = String::new();
-    code.push_str("//! 由 index.html 编译生成 — VNode 树\n\n");
-    code.push_str("use dom_flat::*;\n\n");
+    code.push_str("//! 由 index.html 编译生成 — VNode 树 + 内联样式\n\n");
+    code.push_str("use runtime::*;\n\n");
 
     code.push_str("/// 构建 VNode 树\n");
     code.push_str("pub fn build_vnode() -> VNode {\n");
 
-    let body_children: Vec<String> = elements
-        .iter()
-        .map(|el| html_element_to_vnode(el, 3))
-        .collect();
-
-    if body_children.is_empty() {
-        code.push_str("    VElementVNode::new(\"body\").into()\n");
+    if elements.is_empty() {
+        code.push_str("    VElementVNode::new(\"div\").into()\n");
+    } else if elements.len() == 1 {
+        code.push_str(&format!("{}.into()\n", html_element_to_vnode(&elements[0], 1)));
     } else {
-        code.push_str("    VElementVNode::new(\"body\")\n");
+        code.push_str("    VElementVNode::new(\"div\")\n");
         code.push_str("        .with_children(vec![\n");
-        for child in &body_children {
-            code.push_str(&format!("{},\n", child));
+        for el in elements {
+            code.push_str(&format!("{},\n", html_element_to_vnode(el, 2)));
         }
         code.push_str("        ])\n");
         code.push_str("        .into()\n");
     }
     code.push_str("}\n");
+
+    // 内联 <style> 样式表
+    if !inline_styles.is_empty() {
+        code.push('\n');
+        code.push_str("/// 创建内联 <style> 样式表（对应 HTML 中的 <style> 标签）。\n");
+        code.push_str("pub fn create_style_sheets() -> Vec<CssStyleSheet> {\n");
+        code.push_str("    vec![\n");
+        for spec in inline_styles {
+            let id_expr = match &spec.id {
+                Some(id_val) => format!("Some(\"{}\".into())", escape_rust_string(id_val)),
+                None => "None".into(),
+            };
+            code.push_str("        CssStyleSheet {\n");
+            code.push_str("            sheetType: \"text/css\".into(),\n");
+            code.push_str("            href: None,\n");
+            code.push_str(&format!("            _id: {},\n", id_expr));
+            code.push_str("            title: None,\n");
+            code.push_str("            media: \"all\".into(),\n");
+            code.push_str("            disabled: false,\n");
+            code.push_str("            cssRules: vec![\n");
+            for rule in &spec.rules {
+                let builder = selector_to_builder_expr(&rule.selector);
+                if rule.declarations.is_empty() {
+                    code.push_str(&format!("                CssRule::new({}),\n", builder));
+                } else {
+                    code.push_str(&format!("                CssRule::new({})\n", builder));
+                    for (prop, val) in &rule.declarations {
+                        code.push_str(&format!(
+                            "                    .decl(\"{}\", \"{}\")\n",
+                            escape_rust_string(prop),
+                            escape_rust_string(val)
+                        ));
+                    }
+                    code.push_str("                ,\n");
+                }
+            }
+            code.push_str("            ],\n");
+            code.push_str("        },\n");
+        }
+        code.push_str("    ]\n");
+        code.push_str("}\n");
+    }
 
     code
 }
@@ -150,13 +211,26 @@ fn html_element_to_vnode(el: &HtmlElement, depth: usize) -> String {
         ));
     }
 
-    // style
+    // style（结构化声明列表）
     if let Some(style_val) = el.attributes.get("style") {
-        code.push_str(&format!(
-            "\n{}.with_style(\"{}\")",
-            inner,
-            escape_rust_string(style_val)
-        ));
+        let decls = parse_inline_style_to_decls(style_val);
+        if !decls.is_empty() {
+            let decl_items: Vec<String> = decls
+                .iter()
+                .map(|(p, v)| {
+                    format!(
+                        "(\"{}\", \"{}\")",
+                        escape_rust_string(p),
+                        escape_rust_string(v)
+                    )
+                })
+                .collect();
+            code.push_str(&format!(
+                "\n{}.with_style(vec![{}])",
+                inner,
+                decl_items.join(", ")
+            ));
+        }
     }
 
     // 其他属性
@@ -207,7 +281,7 @@ fn generate_style_module(spec: &CssModuleSpec) -> String {
 
     let mut code = String::new();
     code.push_str(&format!("//! {} — CSS 样式表\n\n", stem));
-    code.push_str(&format!("use dom_flat::{{{}}};\n\n", imports.join(", ")));
+    code.push_str(&format!("use runtime::{{{}}};\n\n", imports.join(", ")));
 
     code.push_str("/// 创建 CSSStyleSheet（对应 `<link>` 或 `<style>`）。\n");
     code.push_str("pub fn create_style_sheet() -> CssStyleSheet {\n");
@@ -216,9 +290,9 @@ fn generate_style_module(spec: &CssModuleSpec) -> String {
     for rule in rules {
         let builder = selector_to_builder_expr(&rule.selector);
         if rule.declarations.is_empty() {
-            code.push_str(&format!("        CssRule::on({}),\n", builder));
+            code.push_str(&format!("        CssRule::new({}),\n", builder));
         } else {
-            code.push_str(&format!("        CssRule::on({})\n", builder));
+            code.push_str(&format!("        CssRule::new({})\n", builder));
             for (prop, val) in &rule.declarations {
                 code.push_str(&format!(
                     "            .decl(\"{}\", \"{}\")\n",
@@ -230,10 +304,15 @@ fn generate_style_module(spec: &CssModuleSpec) -> String {
         }
     }
 
+    let id_expr = match &spec.id {
+        Some(id_val) => format!("Some(\"{}\".into())", escape_rust_string(id_val)),
+        None => "None".into(),
+    };
     code.push_str("    ];\n\n");
     code.push_str("    CssStyleSheet {\n");
     code.push_str("        sheetType: \"text/css\".into(),\n");
     code.push_str(&format!("        href: {},\n", href_expr));
+    code.push_str(&format!("        _id: {},\n", id_expr));
     code.push_str("        title: None,\n");
     code.push_str("        media: \"all\".into(),\n");
     code.push_str("        disabled: false,\n");
@@ -347,7 +426,7 @@ fn generate_handler_module(
     code.push_str(&format!("//! {} — JS 事件处理器\n\n", stem));
     code.push_str("use std::rc::Rc;\n");
     code.push_str("use std::cell::RefCell;\n");
-    code.push_str("use dom_flat::*;\n\n");
+    code.push_str("use runtime::*;\n\n");
 
     code.push_str("/// 共享状态 + 事件处理器\n");
     code.push_str("pub fn setup_handlers(document: &DomRegistry) {\n");
@@ -406,7 +485,7 @@ fn generate_handler_module(
 
             // 事件监听器
             code.push_str(&format!(
-                "    {}.addEventListener(document, \"{}\", Box::new(move |_: &dom_flat::Event| {{\n",
+                "    {}.addEventListener(document, \"{}\", Box::new(move |_: &runtime::Event| {{\n",
                 handler.element_var, handler.event_type
             ));
             for line in handler.body_code.lines() {
@@ -425,22 +504,28 @@ fn generate_handler_module(
     code
 }
 
-/// 生成 main.rs：使用 DomRegistry + StyleEngine + document.styleSheets。
+/// 生成 main.rs：使用 AppRegistry 统一入口。
 fn generate_main_module(
+    html_module_name: &str,
     title: &str,
     width: u32,
     height: u32,
     style_files: &[(String, String)],
     handler_files: &[(String, String)],
+    has_inline_styles: bool,
+    dev_view: bool,
 ) -> String {
     let escaped_title = escape_rust_string(title);
 
     let mut code = String::new();
     code.push_str("//! Generated by rust-test compiler\n\n");
-    code.push_str("use dom_flat::*;\n");
-    code.push_str("use style_runtime::StyleEngine;\n\n");
+    code.push_str("use runtime::AppRegistry;\n");
+    if dev_view {
+        code.push_str("use devtools::DevToolsPlugin;\n");
+    }
+    code.push('\n');
 
-    code.push_str("mod html;\n");
+    code.push_str(&format!("mod {};\n", html_module_name));
     for (name, _) in style_files {
         code.push_str(&format!("mod {};\n", name));
     }
@@ -451,29 +536,31 @@ fn generate_main_module(
 
     code.push_str("fn main() {\n");
     code.push_str(&format!(
-        "    println!(\"Ruft App: {} ({}x{})\");\n",
+        "    println!(\"Ruft App: {} ({}x{})\");\n\n",
         escaped_title, width, height
     ));
+
+    code.push_str("    let mut app = AppRegistry::new();\n");
+
+    // 0. 注册插件（在加载 DOM 之前）
+    if dev_view {
+        code.push_str("    app.loadPlugins(DevToolsPlugin::default());\n");
+    }
     code.push('\n');
-    code.push_str("    let mut document = DomRegistry::new();\n");
-    code.push_str("    let mut style_engine = StyleEngine::new();\n\n");
 
-    // 1. 加载 DOM
-    code.push_str("    // ── 1. 加载 DOM 树 ──\n");
-    code.push_str("    document.loadVnode(html::build_vnode());\n\n");
-
-    // 2. 加载样式表
-    if !style_files.is_empty() {
-        code.push_str("    // ── 2. 注册样式表到 document.styleSheets ──\n");
-        for (name, _) in style_files {
-            code.push_str(&format!("    document.addStyleSheet({}::create_style_sheet());\n", name));
-        }
-        code.push('\n');
+    // 1. 加载 DOM + 样式
+    code.push_str("    // ── 1. 加载 DOM + 样式 ──\n");
+    code.push_str(&format!("    app.loadNodes({}::build_vnode());\n", html_module_name));
+    if has_inline_styles {
+        code.push_str(&format!("    app.loadStyles({}::create_style_sheets());\n", html_module_name));
+    }
+    for (name, _) in style_files {
+        code.push_str(&format!("    app.loadStyles([{}::create_style_sheet()]);\n", name));
     }
 
-    // 3. 启动引擎，on_ready 回调注册事件处理器
-    code.push_str("    // ── 3. 启动：计算样式 → 渲染 → 注册 JS ──\n");
-    code.push_str("    style_engine.run(&mut document, |doc| {\n");
+    // 2. 初始化 + JS
+    code.push_str("\n    // ── 2. 初始化：计算样式 → 注册 JS ──\n");
+    code.push_str("    app.init(|doc| {\n");
     if !handler_files.is_empty() {
         for (name, _) in handler_files {
             code.push_str(&format!("        {}::setup_handlers(doc);\n", name));
@@ -594,6 +681,19 @@ fn translate_js_body_line(line: &str, _elements: &[HtmlElement]) -> String {
     }
 
     line.to_string()
+}
+
+/// 将内联 style 属性字符串解析为声明元组列表。
+///
+/// 输入：`"display: flex; border: 1px solid #bfbfbf"`
+/// 输出：`[("display", "flex"), ("border", "1px solid #bfbfbf")]`
+fn parse_inline_style_to_decls(raw: &str) -> Vec<(String, String)> {
+    raw.split(';')
+        .map(|d| d.trim())
+        .filter(|d| !d.is_empty())
+        .filter_map(|d| d.split_once(':'))
+        .map(|(prop, val)| (prop.trim().to_string(), val.trim().to_string()))
+        .collect()
 }
 
 /// 转义字符串用于 Rust 字面量。

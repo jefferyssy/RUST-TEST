@@ -1,7 +1,6 @@
 //! 选择器匹配单元测试。
 
-use super::*;
-use dom_flat::{BasicSelector, ComplexSelector, Specificity};
+use crate::{BasicSelector, ComplexSelector, Specificity};
 
 #[test]
 fn test_parse_tag_selector() {

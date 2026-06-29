@@ -1,7 +1,7 @@
 //! 层叠合并单元测试。
 
 use super::*;
-use dom_flat::{ComplexSelector, CssRule};
+use crate::{ComplexSelector, CssRule};
 
 fn rule(sel: &str, prop: &str, val: &str) -> CssRule {
     CssRule {
@@ -14,14 +14,15 @@ fn rule(sel: &str, prop: &str, val: &str) -> CssRule {
 #[test]
 fn test_cascade_single_rule() {
     let rules = vec![rule("div", "font-size", "24px")];
-    let style = cascade("", &rules);
+    let style = cascade(&[], &rules);
     assert_eq!(style.fontSize, 24.0);
 }
 
 #[test]
 fn test_cascade_inline_overrides() {
     let rules = vec![rule("div", "font-size", "24px")];
-    let style = cascade("font-size: 48px", &rules);
+    let inline = vec![("font-size".to_string(), "48px".to_string())];
+    let style = cascade(&inline, &rules);
     assert_eq!(style.fontSize, 48.0);
 }
 
@@ -31,10 +32,10 @@ fn test_cascade_specificity_order() {
     let class = rule(".big", "font-size", "24px");
     let id = rule("#title", "font-size", "36px");
 
-    let style = cascade("", &[tag.clone(), class.clone(), id.clone()]);
+    let style = cascade(&[], &[tag.clone(), class.clone(), id.clone()]);
     assert_eq!(style.fontSize, 36.0);
 
-    let style = cascade("", &[tag, class]);
+    let style = cascade(&[], &[tag, class]);
     assert_eq!(style.fontSize, 24.0);
 }
 
@@ -43,10 +44,10 @@ fn test_cascade_last_wins_same_specificity() {
     let r1 = rule(".a", "color", "white");
     let r2 = rule(".b", "color", "white");
 
-    let style1 = cascade("", &[r1.clone(), r2.clone()]);
+    let style1 = cascade(&[], &[r1.clone(), r2.clone()]);
     assert_eq!(style1.textColor, 0xFFFFFFFF);
 
-    let style2 = cascade("", &[r1]);
+    let style2 = cascade(&[], &[r1]);
     assert_eq!(style2.textColor, 0xFFFFFFFF);
 }
 

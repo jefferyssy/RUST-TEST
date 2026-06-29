@@ -1,7 +1,7 @@
 //! 反向索引单元测试。
 
 use crate::index::RuleIndex;
-use dom_flat::{ComplexSelector, CssRule};
+use crate::{ComplexSelector, CssRule};
 
 fn make_rule(selector_str: &str) -> CssRule {
     CssRule {

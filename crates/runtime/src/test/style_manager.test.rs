@@ -1,7 +1,7 @@
 //! 样式引擎集成测试。
 
 use super::*;
-use dom_flat::*;
+use crate::*;
 
 #[test]
 fn test_parse_simple_css() {
@@ -58,19 +58,20 @@ fn test_full_flow_with_structured_rules() {
     let sheet = CssStyleSheet {
         sheetType: "text/css".into(),
         href: None,
+        _id: None,
         title: None,
         media: "all".into(),
         disabled: false,
         cssRules: vec![
-            CssRule::on(Select::class("container"))
+            CssRule::new(Select::class("container"))
                 .decl("background", "#f5f5f5")
                 .decl("padding", "20px"),
-            CssRule::on(Select::tag("h1"))
+            CssRule::new(Select::tag("h1"))
                 .decl("font-size", "24px")
                 .decl("color", "#333333"),
-            CssRule::on(Select::id("btn"))
+            CssRule::new(Select::id("btn"))
                 .decl("color", "white"),
-            CssRule::on(Select::class("primary"))
+            CssRule::new(Select::class("primary"))
                 .decl("background", "#007bff")
                 .decl("font-size", "16px"),
         ],
@@ -107,7 +108,7 @@ fn test_inline_style_priority() {
     let vnode = VNode::Element(VElementVNode {
         tagName: "div".into(),
         classList: vec!["box".into()],
-        style: "padding: 50px; margin: 10px".into(),
+        style: vec![("padding".to_string(), "50px".to_string()), ("margin".to_string(), "10px".to_string())],
         ..Default::default()
     });
     let root_id = doc.vnodeToDom(&vnode);
@@ -115,11 +116,12 @@ fn test_inline_style_priority() {
     let sheet = CssStyleSheet {
         sheetType: "text/css".into(),
         href: None,
+        _id: None,
         title: None,
         media: "all".into(),
         disabled: false,
         cssRules: vec![
-            CssRule::on(Select::class("box"))
+            CssRule::new(Select::class("box"))
                 .decl("padding", "10px")
                 .decl("margin", "0")
                 .decl("font-size", "14px"),

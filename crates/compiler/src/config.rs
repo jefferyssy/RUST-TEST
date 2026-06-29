@@ -32,6 +32,7 @@ pub struct CompileInput {
     pub title: Option<String>,      // None → "Demo"
     pub width: Option<u32>,         // None → 800
     pub height: Option<u32>,        // None → 600
+    pub dev_view: bool,             // 启用运行时可视化仪表盘
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -106,6 +107,7 @@ pub struct ResolvedConfig {
     pub width: u32,
     pub height: u32,
     pub entry: String,
+    pub dev_view: bool,
 }
 
 /// 三步覆盖，产出 [`ResolvedConfig`]。
@@ -127,12 +129,13 @@ pub fn resolve(input: &CompileInput) -> Result<ResolvedConfig, String> {
 
     let mut r = ResolvedConfig {
         input_dir: input.input_dir.clone(),
-        output_dir: input.input_dir.join("target"),
+        output_dir: input.input_dir.join("generated"),
         name: default_name,
         title: String::from("Demo"),
         width: 800,
         height: 600,
         entry: String::from("index.html"),
+        dev_view: input.dev_view,
     };
 
     // ══ 步骤 2: 配置文件覆盖 ══

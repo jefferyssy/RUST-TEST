@@ -22,8 +22,8 @@ pub struct DomNode {
     pub id: Option<String>,
     /// class 列表（对标 `element.classList`）
     pub classList: Vec<String>,
-    /// 内联样式原始字符串（对标 `element.style`）
-    pub style: String,
+    /// 内联样式声明列表（对标 `element.style`），编译期/运行时解析
+    pub style: Vec<(String, String)>,
     /// 其他属性键值对（对标 `element.getAttribute`）
     pub attrs: Vec<(String, String)>,
 
@@ -56,7 +56,7 @@ impl DomNode {
             tagName: Some(tagName),
             id: None,
             classList: Vec::new(),
-            style: String::new(),
+            style: Vec::new(),
             attrs: Vec::new(),
             computedStyle: ComputedStyle::default(),
             styleDirty: true,
@@ -76,7 +76,7 @@ impl DomNode {
             tagName: None,
             id: None,
             classList: Vec::new(),
-            style: String::new(),
+            style: Vec::new(),
             attrs: Vec::new(),
             computedStyle: ComputedStyle::default(),
             styleDirty: false,

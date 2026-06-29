@@ -1,7 +1,7 @@
 //! Printer 单元测试。
 
 use super::*;
-use crate::{DomRegistry, NodeId, VNode, VElementVNode};
+use runtime::{DomRegistry, NodeId, VNode, VElementVNode};
 
 #[test]
 fn test_print_empty_tree() {
@@ -42,7 +42,7 @@ fn test_print_with_styles() {
     let root = doc.vnodeToDom(&vnode);
 
     // 模拟设置计算样式
-    let mut style = crate::ComputedStyle::default();
+    let mut style = runtime::ComputedStyle::default();
     style.bgColor = 0xFF007BFFu32;
     style.fontSize = 16.0;
     doc.allNodes.get_mut(&root).unwrap().computedStyle = style;

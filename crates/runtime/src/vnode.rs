@@ -21,8 +21,8 @@ pub struct VElementVNode {
     pub id: Option<String>,
     /// class 列表
     pub classList: Vec<String>,
-    /// 内联样式原始字符串
-    pub style: String,
+    /// 内联样式声明列表（编译期解析，对标 `element.style`）
+    pub style: Vec<(String, String)>,
     /// 其他属性键值对
     pub attrs: Vec<(String, String)>,
     /// 子 VNode 列表
@@ -37,7 +37,7 @@ impl Default for VElementVNode {
             tagName: String::new(),
             id: None,
             classList: Vec::new(),
-            style: String::new(),
+            style: Vec::new(),
             attrs: Vec::new(),
             childNodes: Vec::new(),
             diffKey: None,
@@ -84,9 +84,16 @@ impl VElementVNode {
         self
     }
 
-    /// 设置内联 style。
-    pub fn with_style(mut self, style: impl Into<String>) -> Self {
-        self.style = style.into();
+    /// 设置内联 style（结构化声明列表）。
+    /// 使用: `.with_style(vec![("display", "flex"), ("color", "red")])`
+    pub fn with_style(
+        mut self,
+        declarations: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
+    ) -> Self {
+        self.style = declarations
+            .into_iter()
+            .map(|(p, v)| (p.into(), v.into()))
+            .collect();
         self
     }
 

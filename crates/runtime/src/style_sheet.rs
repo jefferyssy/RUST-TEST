@@ -41,6 +41,9 @@ impl Default for StyleSheetList {
 ///
 /// `ownerNode` / `parentStyleSheet` / `ownerRule` 不适用：
 /// 编译模型下 `<style>` 不进入 DOM，`@import` 编译期内联展开。
+///
+/// 内部字段 `_id` 以 `_` 前缀标识，区分 W3C 标准属性。
+/// 编译期从 `<style id="...">` 或 `<link id="...">` 的 id 属性填入。
 #[allow(non_snake_case)]
 #[derive(Debug, Clone)]
 pub struct CssStyleSheet {
@@ -56,6 +59,8 @@ pub struct CssStyleSheet {
     pub disabled: bool,
     /// 规则列表（对应 CSSRuleList）
     pub cssRules: Vec<CssRule>,
+    /// 内部 id（非 W3C 标准，编译期从 HTML 的 style/link 元素 id 属性填入）
+    pub _id: Option<String>,
 }
 
 impl CssStyleSheet {

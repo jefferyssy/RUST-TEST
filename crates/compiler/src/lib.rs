@@ -41,10 +41,10 @@ pub use codegen::MultiFileOutput;
 /// ```text
 /// output/
 ///   src/
-///     main.rs    ← 入口（使用 DomRegistry + RuntimeStyleManager）
-///     html.rs    ← VNode 树构造
-///     style.rs   ← CSS 样式注册（文件名同源文件 stem）
-///     app.rs     ← JS 事件处理器（文件名同源文件 stem）
+///     main.rs       ← 入口（使用 DomRegistry + RuntimeStyleManager）
+///     index_html.rs ← VNode 树构造（文件名: {html_stem}_html.rs）
+///     style_css.rs  ← CSS 样式注册（文件名: {stem}_{ext}.rs）
+///     app_js.rs     ← JS 事件处理器（文件名: {stem}_{ext}.rs）
 ///   Cargo.toml
 /// ```
 pub fn compile_project_to_dir(input: CompileInput) -> Result<ResolvedConfig, String> {
@@ -59,8 +59,11 @@ pub fn compile_project_to_dir(input: CompileInput) -> Result<ResolvedConfig, Str
     // 写各模块文件
     fs::write(src_dir.join("main.rs"), &output.main_rs)
         .map_err(|e| format!("cannot write main.rs: {e}"))?;
-    fs::write(src_dir.join("html.rs"), &output.html_rs)
-        .map_err(|e| format!("cannot write html.rs: {e}"))?;
+    fs::write(
+        src_dir.join(format!("{}.rs", output.html_module_name)),
+        &output.html_rs,
+    )
+    .map_err(|e| format!("cannot write {}.rs: {e}", output.html_module_name))?;
     for (stem, content) in &output.style_files {
         fs::write(src_dir.join(format!("{}.rs", stem)), content)
             .map_err(|e| format!("cannot write {}.rs: {e}", stem))?;
@@ -72,16 +75,21 @@ pub fn compile_project_to_dir(input: CompileInput) -> Result<ResolvedConfig, Str
 
     // 写 Cargo.toml
     let workspace_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let dom_flat_rel = resolve::rel_path(
+    let runtime_rel = resolve::rel_path(
         output_dir,
-        &workspace_root.join("crates").join("runtime").join("dom_flat"),
+        &workspace_root.join("crates").join("runtime"),
     );
-    let style_runtime_rel = resolve::rel_path(
+    let devtools_rel = resolve::rel_path(
         output_dir,
-        &workspace_root.join("crates").join("runtime").join("style_runtime"),
+        &workspace_root.join("crates").join("devtools"),
     );
+    let dev_dep = if resolved.dev_view {
+        format!("devtools = {{ path = \"{devtools_rel}\" }}\n")
+    } else {
+        String::new()
+    };
     let cargo_toml = format!(
-        "[workspace]\n\
+         "[workspace]\n\
          \n\
          [package]\n\
          name = \"{}\"\n\
@@ -89,8 +97,8 @@ pub fn compile_project_to_dir(input: CompileInput) -> Result<ResolvedConfig, Str
          edition = \"2021\"\n\
          \n\
          [dependencies]\n\
-         dom_flat = {{ path = \"{dom_flat_rel}\" }}\n\
-         style_runtime = {{ path = \"{style_runtime_rel}\" }}\n",
+         runtime = {{ path = \"{runtime_rel}\" }}\n\
+         {dev_dep}",
         resolved.name,
     );
     fs::write(output_dir.join("Cargo.toml"), &cargo_toml)
@@ -108,10 +116,18 @@ fn compile_project_split(resolved: &config::ResolvedConfig) -> Result<codegen::M
 
     let resources = html::parse_html_document(&html_src, &resolved.input_dir);
 
+    let html_stem = html_path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+
     Ok(pipeline::compile_resources(
         &resources,
+        &html_stem,
         &resolved.title,
         resolved.width,
         resolved.height,
+        resolved.dev_view,
     ))
 }

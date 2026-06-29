@@ -148,9 +148,9 @@ impl DomRegistry {
                 self.idMap.insert(value.to_string(), nodeId);
             }
 
-            // 特殊处理：style 属性 → 更新 node.style（cascade 从此字段读取内联样式）
+            // 特殊处理：style 属性 → 解析后更新 node.style（cascade 从此字段读取内联样式）
             if name == "style" {
-                node.style = value.to_string();
+                node.style = parse_inline_style(value);
             }
 
             if !node.styleDirty {
@@ -261,7 +261,13 @@ impl DomRegistry {
                     self.add_class(id, class);
                 }
                 if !el.style.is_empty() {
-                    self.setAttribute(id, "style", &el.style);
+                    if let Some(node) = self.allNodes.get_mut(&id) {
+                        node.style = el.style.clone();
+                        if !node.styleDirty {
+                            node.styleDirty = true;
+                            self.styleDirtySet.insert(id);
+                        }
+                    }
                 }
                 for (key, val) in &el.attrs {
                     self.setAttribute(id, key, val);
@@ -442,6 +448,19 @@ impl Default for DomRegistry {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// 解析内联样式字符串为结构化声明列表。
+///
+/// 输入：`"display: flex; border: 1px solid #bfbfbf"`
+/// 输出：`[("display", "flex"), ("border", "1px solid #bfbfbf")]`
+pub fn parse_inline_style(raw: &str) -> Vec<(String, String)> {
+    raw.split(';')
+        .map(|d| d.trim())
+        .filter(|d| !d.is_empty())
+        .filter_map(|d| d.split_once(':'))
+        .map(|(prop, val)| (prop.trim().to_string(), val.trim().to_string()))
+        .collect()
 }
 
 #[cfg(test)]

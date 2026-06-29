@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use dom_flat::{BasicSelector, CssRule};
+use crate::{BasicSelector, CssRule};
 
 /// 规则索引 — 按最右段最佳 key 分组，存 rules 中的下标。
 #[derive(Debug, Clone, Default)]
